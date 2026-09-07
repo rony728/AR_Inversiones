@@ -8,9 +8,10 @@ type Props = {
   selectedId: string;
   excludedIds: string[];
   onChange: (productId: string) => void;
+  showStock?: boolean;
 };
 
-export function ProductSearchSelect({ products, selectedId, excludedIds, onChange }: Props) {
+export function ProductSearchSelect({ products, selectedId, excludedIds, onChange, showStock = false }: Props) {
   const optionsId = useId();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -39,7 +40,7 @@ export function ProductSearchSelect({ products, selectedId, excludedIds, onChang
     />
     {open && <div className="product-options" id={optionsId} role="listbox">
       {options.length ? options.slice(0, 50).map((product) => <button key={product.id} type="button" role="option" aria-selected={product.id === selectedId} onMouseDown={(event) => event.preventDefault()} onClick={() => choose(product.id)}>
-        <strong>{product.nombre}</strong><small>{product.codigo}</small>
+        <strong>{product.nombre}</strong><small>{product.codigo}{showStock ? ` · ${product.cantidad_disponible} disponibles` : ''}</small>
       </button>) : <span>No hay productos disponibles que coincidan.</span>}
     </div>}
   </div>;

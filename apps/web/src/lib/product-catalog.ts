@@ -14,12 +14,12 @@ export type ProductRow = {
 export type ProductSort = 'producto' | 'cantidad' | 'costo' | 'precio';
 export type SortDirection = 'asc' | 'desc';
 
-const normalized = (value: unknown) => String(value ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLocaleLowerCase('es-HN');
+export const normalizeSearch = (value: unknown) => String(value ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLocaleLowerCase('es-HN');
 
 export function filterProducts(rows: ProductRow[], search: string) {
-  const term = normalized(search.trim());
+  const term = normalizeSearch(search.trim());
   if (!term) return rows;
-  return rows.filter((row) => [row.codigo, row.nombre, row.categoria].some((value) => normalized(value).includes(term)));
+  return rows.filter((row) => [row.codigo, row.nombre, row.categoria].some((value) => normalizeSearch(value).includes(term)));
 }
 
 export function sortProducts(rows: ProductRow[], sort: ProductSort, direction: SortDirection) {
