@@ -24,7 +24,7 @@ BEGIN
   INSERT INTO productos (categoria_id, codigo, nombre) VALUES (categoria, 'TEST-PROD-001', 'Producto de prueba') RETURNING id INTO producto;
   INSERT INTO compras (proveedor_id, socio_id, custodia_id, fecha, total) VALUES (proveedor, rony, custodia_productos, CURRENT_DATE, 100) RETURNING id INTO compra;
   INSERT INTO detalle_compras (compra_id, producto_id, cantidad, costo_unitario, subtotal) VALUES (compra, producto, 1, 100, 100);
-  INSERT INTO inventario_por_socio (producto_id, socio_id, existencia, costo_promedio_unitario) VALUES (producto, rony, 1, 100);
+  INSERT INTO inventario (producto_id, existencia, costo_promedio_unitario) VALUES (producto, 1, 100);
   INSERT INTO prestamos (cliente_id, socio_id, custodia_id, fecha_desembolso, fecha_proximo_pago, capital_original, capital_pendiente)
   VALUES (cliente, rony, custodia_prestamos, CURRENT_DATE, CURRENT_DATE + 30, 5000, 5000);
 END $$;

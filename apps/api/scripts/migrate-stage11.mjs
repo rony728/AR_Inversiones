@@ -94,9 +94,6 @@ function buildPlan(data, rules, config) {
   const transformedDistributions = distributions.map((row) => ({ ...row, paymentDate: rules.distributionDateOverridesBySourceRow[String(row['Fila origen'])] ?? dateOf(row['Fecha de pago']), partnerApplied: partners.includes(String(row.Socio)) ? row.Socio : null }));
   const includedProducts = transformedProducts.filter((row) => !row.excluded);
   const positiveInventory = includedProducts.filter((row) => row.stockApplied > 0);
-  const ownership = config?.inventoryOwnership ?? {};
-  const ownerFor = (row) => ownership.byProductId?.[row.producto_id] ?? ownership.defaultPartner ?? null;
-  const missingOwners = positiveInventory.filter((row) => !partners.includes(ownerFor(row))).map((row) => ({ productId: row.producto_id, product: row.Nombre, units: row.stockApplied }));
   const missingCustodies = custodyKeys.filter((key) => !Number.isFinite(config?.custodyBalances?.[key]) || config.custodyBalances[key] < 0);
   const blockers = [];
   if (checklist.some((row) => normalize(row['Estado revisión']) !== 'aprobado')) blockers.push('Hay decisiones pendientes sin aprobación.');
@@ -113,7 +110,7 @@ function buildPlan(data, rules, config) {
   const appliedStock = Number(includedProducts.reduce((total, row) => total + row.stockApplied, 0).toFixed(0));
   const appliedStockValue = Number(includedProducts.reduce((total, row) => total + row.stockApplied * numberOf(row['Costo total unitario']), 0).toFixed(2));
   return {
-    transformedProducts, includedProducts, transformedLoans, transformedPayments, transformedDistributions, missingOwners, missingCustodies, blockers,
+    transformedProducts, includedProducts, transformedLoans, transformedPayments, transformedDistributions, missingCustodies, blockers,
     report: {
       source: { file: path.basename(sourcePath) },
       sheets: requiredSheets.map((name) => ({ name, records: data[name].length })),
@@ -133,15 +130,14 @@ function buildPlan(data, rules, config) {
         paymentsWithoutDateAfterApprovedCorrections: transformedPayments.filter((row) => !row.paymentDate).map((row) => row.__row),
         paymentsWithoutPartnerAfterApprovedCorrections: transformedPayments.filter((row) => !row.partnerApplied).map((row) => row.__row),
         distributionsWithoutPartnerAfterApprovedCorrections: transformedDistributions.filter((row) => !row.partnerApplied).map((row) => row.__row),
-        productsRequiringInventoryOwner: missingOwners,
         custodyBalancesRequiringInput: missingCustodies,
         purchasesSheetMissing: true
       },
       transformations: { excludedProducts: rules.excludedProducts, stockOverrides: rules.stockOverrides, ignoredSuggestedPrices: rules.ignoredSuggestedPrices, loanRateOverrides: rules.loanRateOverrides, paymentDateOverridesBySourceRow: rules.paymentDateOverridesBySourceRow, paymentPartnerOverridesBySourceRow: rules.paymentPartnerOverridesBySourceRow, distributionDateOverridesBySourceRow: rules.distributionDateOverridesBySourceRow, similarClients: 'Se conservan separados según las 13 decisiones aprobadas.' },
       legacyHandling: { sales: 'Se conservan en ventas_historicas porque las 82 filas no tienen fecha ni socio financiador.', payments: 'Se conservan por cliente en pagos_intereses_historicos; no se enlazan artificialmente a un préstamo.', financialMovements: 'Se conservan como referencia y no afectan saldos iniciales.', distributions: 'Se conservan individualmente y no descuentan las custodias iniciales.', purchases: 'El archivo no contiene una hoja de compras; se valida como cero.', activeLoans: 'Se importan con fecha de desembolso nula, fecha próxima original preservada y sin cálculo retroactivo anterior a la migración.' },
-      requiredStartupInputs: { missingCustodyBalances: missingCustodies, missingInventoryOwners: missingOwners },
+      requiredStartupInputs: { missingCustodyBalances: missingCustodies },
       blockers,
-      status: blockers.length ? 'BLOCKED_BY_SOURCE' : missingCustodies.length || missingOwners.length ? 'READY_AFTER_STARTUP_INPUTS' : 'READY_TO_APPLY'
+      status: blockers.length ? 'BLOCKED_BY_SOURCE' : missingCustodies.length ? 'READY_AFTER_STARTUP_INPUTS' : 'READY_TO_APPLY'
     }
   };
 }
@@ -157,7 +153,7 @@ async function backupDatabase(client, destination) {
 
 async function applyMigration(data, plan, sourceHash, sourceSize, config) {
   if (plan.blockers.length) throw new Error(plan.blockers.join(' '));
-  if (plan.missingCustodies.length || plan.missingOwners.length) throw new Error('Faltan los seis saldos de custodia o la asignación del socio propietario del inventario. Completa stage11-input.json antes de usar --apply.');
+  if (plan.missingCustodies.length) throw new Error('Faltan los seis saldos de custodia. Completa stage11-input.json antes de usar --apply.');
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const client = await pool.connect();
   const backupPath = path.join(migrationDir, 'backups', `pre-stage11-${new Date().toISOString().replaceAll(':', '-')}.json`);
@@ -184,18 +180,16 @@ async function applyMigration(data, plan, sourceHash, sourceSize, config) {
     }
     for (const row of data.Clientes) await client.query(`INSERT INTO clientes (id,nombre,identificacion,telefono,direccion,notas) VALUES ($1,$2,$3,$4,$5,$6)`, [row.cliente_id, row.Nombre, row.Identidad || null, row.Teléfono || null, row.Dirección || null, [row.Referencias, row.Observaciones, `Fuentes: ${row.Fuentes ?? ''}`].filter(Boolean).join('\n') || null]);
     for (const row of plan.transformedProducts) {
-      const ownerName = config.inventoryOwnership.byProductId?.[row.producto_id] ?? config.inventoryOwnership.defaultPartner ?? null;
-      const ownerId = ownerName ? partnerIds.get(ownerName) : null;
       let productId = null;
       if (!row.excluded) {
         productId = row.producto_id;
         await client.query(`INSERT INTO productos (id,codigo,nombre,descripcion,activo,marca,modelo,sku,codigo_barras,control_serie,garantia_dias,precio_sugerido,precio_minimo,existencia_minima,fuente_migracion_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [row.producto_id, `MIG-${String(row.producto_id).slice(0, 8).toUpperCase()}`, row.Nombre, row['Observaciones de revisión'] || null, booleanOf(row.Activo), row.Marca || null, row.Modelo || null, row['SKU opcional'] || null, row['Código de barras'] || null, booleanOf(row['Control serie']), numberOf(row['Garantía días']), row.priceSuggestedApplied, row['Precio mínimo'], numberOf(row['Existencia mínima']), sourceId]);
       }
       const inventoryState = row.excluded ? 'EXCLUIDO' : row.stockApplied > 0 ? 'APLICADO' : 'APLICADO';
-      await client.query(`INSERT INTO inventario_inicial_migracion (fuente_id,producto_legacy_id,producto_id,socio_id,existencia_fuente,existencia_aplicada,costo_unitario,estado,observaciones) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [sourceId, row.producto_id, productId, row.stockApplied > 0 ? ownerId : null, row.stockSource, row.excluded ? 0 : row.stockApplied, numberOf(row['Costo total unitario']), inventoryState, row.transformation]);
+      await client.query(`INSERT INTO inventario_inicial_migracion (fuente_id,producto_legacy_id,producto_id,existencia_fuente,existencia_aplicada,costo_unitario,estado,observaciones) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [sourceId, row.producto_id, productId, row.stockSource, row.excluded ? 0 : row.stockApplied, numberOf(row['Costo total unitario']), inventoryState, row.transformation]);
       if (!row.excluded && row.stockApplied > 0) {
-        await client.query(`INSERT INTO inventario_por_socio (producto_id,socio_id,existencia,costo_promedio_unitario) VALUES ($1,$2,$3,$4)`, [row.producto_id, ownerId, row.stockApplied, numberOf(row['Costo total unitario'])]);
-        await client.query(`INSERT INTO movimientos_inventario (producto_id,socio_id,tipo,cantidad,existencia_anterior,existencia_posterior,costo_unitario,referencia_tipo,referencia_id) VALUES ($1,$2,'MIGRACION_INICIAL',$3,0,$3,$4,'FUENTE_MIGRACION',$5)`, [row.producto_id, ownerId, row.stockApplied, numberOf(row['Costo total unitario']), sourceId]);
+        await client.query(`INSERT INTO inventario (producto_id,existencia,costo_promedio_unitario) VALUES ($1,$2,$3)`, [row.producto_id, row.stockApplied, numberOf(row['Costo total unitario'])]);
+        await client.query(`INSERT INTO movimientos_inventario (producto_id,tipo,cantidad,existencia_anterior,existencia_posterior,costo_unitario,referencia_tipo,referencia_id) VALUES ($1,'MIGRACION_INICIAL',$2,0,$2,$3,'FUENTE_MIGRACION',$4)`, [row.producto_id, row.stockApplied, numberOf(row['Costo total unitario']), sourceId]);
       }
     }
     for (const row of plan.transformedLoans) {
@@ -214,8 +208,8 @@ async function applyMigration(data, plan, sourceHash, sourceSize, config) {
     }
     const validation = (await client.query(`SELECT
       (SELECT count(*) FROM productos WHERE fuente_migracion_id=$1)::int AS productos,
-      (SELECT coalesce(sum(existencia),0) FROM inventario_por_socio)::int AS stock,
-      (SELECT coalesce(sum(existencia*costo_promedio_unitario),0) FROM inventario_por_socio) AS stock_cost,
+      (SELECT coalesce(sum(existencia),0) FROM inventario)::int AS stock,
+      (SELECT coalesce(sum(existencia*costo_promedio_unitario),0) FROM inventario) AS stock_cost,
       (SELECT count(*) FROM clientes)::int AS clientes,
       (SELECT count(*) FROM prestamos WHERE fuente_migracion_id=$1)::int AS prestamos,
       (SELECT coalesce(sum(capital_pendiente),0) FROM prestamos WHERE fuente_migracion_id=$1) AS capital,
@@ -257,4 +251,4 @@ let result = { mode: 'DRY_RUN', ...plan.report };
 if (applying) result = { mode: 'APPLY', ...(await applyMigration(data, plan, sourceHash, sourceBytes.length, config)) };
 await fs.mkdir(path.dirname(reportPath), { recursive: true });
 await fs.writeFile(reportPath, JSON.stringify(result, null, 2), 'utf8');
-console.log(JSON.stringify({ report: reportPath, mode: result.mode, status: result.status ?? result.report?.status ?? (result.alreadyApplied ? 'ALREADY_APPLIED' : null), counts: plan.report.counts, reconciliations: plan.report.reconciliations, missingCustodyBalances: plan.missingCustodies.length, missingInventoryOwners: plan.missingOwners.length, blockers: plan.blockers }, null, 2));
+console.log(JSON.stringify({ report: reportPath, mode: result.mode, status: result.status ?? result.report?.status ?? (result.alreadyApplied ? 'ALREADY_APPLIED' : null), counts: plan.report.counts, reconciliations: plan.report.reconciliations, missingCustodyBalances: plan.missingCustodies.length, blockers: plan.blockers }, null, 2));

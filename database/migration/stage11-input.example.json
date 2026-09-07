@@ -6,9 +6,5 @@
     "Alex.PRESTAMOS": null,
     "Brian.PRODUCTOS": null,
     "Brian.PRESTAMOS": null
-  },
-  "inventoryOwnership": {
-    "defaultPartner": null,
-    "byProductId": {}
   }
 }

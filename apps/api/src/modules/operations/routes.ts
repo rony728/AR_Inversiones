@@ -10,7 +10,7 @@ import { approveInventoryAudit, inventoryAuditInput, startInventoryAudit } from 
 
 const readModels = {
   compras: { table: 'compras', order: 'created_at' }, ventas: { table: 'ventas', order: 'created_at' },
-  inventario: { table: 'inventario_por_socio', order: 'updated_at' }, prestamos: { table: 'prestamos', order: 'created_at' },
+  inventario: { table: 'inventario', order: 'updated_at' }, prestamos: { table: 'prestamos', order: 'created_at' },
   'pagos-prestamo': { table: 'pagos_prestamo', order: 'created_at' }, custodias: { table: 'custodias', order: 'created_at' },
   'movimientos-financieros': { table: 'movimientos_financieros', order: 'created_at' }, gastos: { table: 'gastos', order: 'created_at' },
   distribuciones: { table: 'distribuciones_utilidades', order: 'created_at' },
@@ -142,9 +142,9 @@ operationsRouter.get('/auditorias/:id', asyncHandler(async (req, res) => {
   const audit = await query('SELECT * FROM auditorias_inventario WHERE id=$1', [auditId]);
   if (!audit.rows[0]) throw new AppError(404, 'Auditoría de inventario no encontrada.', 'NOT_FOUND');
   const details = await query(
-    `SELECT d.*,p.codigo,p.nombre AS producto,s.nombre AS socio
-     FROM detalles_auditoria_inventario d JOIN productos p ON p.id=d.producto_id JOIN socios s ON s.id=d.socio_id
-     WHERE d.auditoria_id=$1 ORDER BY p.nombre,s.nombre`, [auditId]
+    `SELECT d.*,p.codigo,p.nombre AS producto
+     FROM detalles_auditoria_inventario d JOIN productos p ON p.id=d.producto_id
+     WHERE d.auditoria_id=$1 ORDER BY p.nombre`, [auditId]
   );
   res.json({ data: { ...audit.rows[0], detalles: details.rows } });
 }));

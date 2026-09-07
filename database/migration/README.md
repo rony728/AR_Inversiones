@@ -6,7 +6,7 @@ La fuente autorizada es `AR_Inversiones_Migracion_V2.xlsx`. El importador calcul
 
 | Hoja | Destino | Tratamiento |
 |---|---|---|
-| Productos | `productos`, `inventario_inicial_migracion`, `inventario_por_socio` | Se aplican las exclusiones, existencias y precios decididos. El código técnico `MIG-xxxxxxxx` se deriva del UUID. El stock requiere socio propietario. |
+| Productos | `productos`, `inventario_inicial_migracion`, `inventario` | Se aplican las exclusiones, existencias y precios decididos. El código técnico `MIG-xxxxxxxx` se deriva del UUID. El stock pertenece al inventario general de AR Inversiones. |
 | Clientes | `clientes` | Se conservan los 121 UUID y los nombres parecidos permanecen separados. |
 | Préstamos activos | `prestamos`, `intereses_prestamo` | Se conserva capital, tasa aprobada, interés inicial y próxima fecha. La fecha de desembolso queda nula y no se calcula interés retroactivo anterior a la migración. |
 | Pagos históricos | `pagos_intereses_historicos` | Se conservan por cliente porque el archivo no identifica de forma fiable el préstamo individual. No modifican custodias ni capital actual. |
@@ -21,9 +21,7 @@ La fuente autorizada es `AR_Inversiones_Migracion_V2.xlsx`. El importador calcul
 Copiar `stage11-input.example.json` como `stage11-input.json` y completar:
 
 - los seis saldos independientes de custodia;
-- el socio propietario del inventario mediante `defaultPartner` o `byProductId`.
-
-No se acepta un saldo negativo ni un socio distinto de Rony, Alex o Brian. El reporte de simulación enumera los productos que todavía necesitan propietario.
+No se acepta un saldo negativo ni un socio distinto de Rony, Alex o Brian en las custodias. No se solicita socio para el inventario inicial.
 
 ## Ejecución
 
@@ -33,6 +31,7 @@ Aplicar primero las migraciones de esquema:
 psql -v ON_ERROR_STOP=1 -d ar_inversiones -f database/migrations/001_initial_schema.sql
 psql -v ON_ERROR_STOP=1 -d ar_inversiones -f database/migrations/002_seed_socios_y_custodias.sql
 psql -v ON_ERROR_STOP=1 -d ar_inversiones -f database/migrations/003_legacy_migration_support.sql
+psql -v ON_ERROR_STOP=1 -d ar_inversiones -f database/migrations/004_inventario_general_del_negocio.sql
 ```
 
 Generar y revisar la simulación:

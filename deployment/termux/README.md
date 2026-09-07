@@ -36,6 +36,7 @@ npm ci --omit=dev
 psql "$DATABASE_URL" -f ../../database/migrations/001_initial_schema.sql
 psql "$DATABASE_URL" -f ../../database/migrations/002_seed_socios_y_custodias.sql
 psql "$DATABASE_URL" -f ../../database/migrations/003_legacy_migration_support.sql
+psql "$DATABASE_URL" -f ../../database/migrations/004_inventario_general_del_negocio.sql
 npm start
 ```
 

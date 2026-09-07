@@ -95,14 +95,13 @@ CREATE TABLE custodias (
   CONSTRAINT custodias_saldo_no_negativo CHECK (saldo_actual >= 0)
 );
 
--- Existencia y costo promedio ponderado por producto y socio financiador.
-CREATE TABLE inventario_por_socio (
+-- Inventario general de AR Inversiones; no pertenece a un socio.
+CREATE TABLE inventario (
   producto_id uuid NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
-  socio_id uuid NOT NULL REFERENCES socios(id) ON DELETE RESTRICT,
   existencia integer NOT NULL DEFAULT 0,
   costo_promedio_unitario numeric(14,4) NOT NULL DEFAULT 0,
   updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (producto_id, socio_id),
+  PRIMARY KEY (producto_id),
   CONSTRAINT inventario_existencia_no_negativa CHECK (existencia >= 0),
   CONSTRAINT inventario_costo_no_negativo CHECK (costo_promedio_unitario >= 0)
 );
@@ -167,7 +166,6 @@ CREATE TABLE detalle_ventas (
 CREATE TABLE movimientos_inventario (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   producto_id uuid NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
-  socio_id uuid NOT NULL REFERENCES socios(id) ON DELETE RESTRICT,
   tipo tipo_movimiento_inventario NOT NULL,
   cantidad integer NOT NULL,
   existencia_anterior integer NOT NULL,
@@ -307,11 +305,10 @@ CREATE TABLE detalles_auditoria_inventario (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   auditoria_id uuid NOT NULL REFERENCES auditorias_inventario(id) ON DELETE RESTRICT,
   producto_id uuid NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
-  socio_id uuid NOT NULL REFERENCES socios(id) ON DELETE RESTRICT,
   existencia_sistema integer NOT NULL,
   existencia_fisica integer NOT NULL,
   diferencia integer NOT NULL,
-  CONSTRAINT detalles_auditoria_producto_socio_unico UNIQUE (auditoria_id, producto_id, socio_id),
+  CONSTRAINT detalles_auditoria_producto_unico UNIQUE (auditoria_id, producto_id),
   CONSTRAINT detalles_auditoria_existencias_no_negativas CHECK (existencia_sistema >= 0 AND existencia_fisica >= 0),
   CONSTRAINT detalles_auditoria_diferencia_valida CHECK (diferencia = existencia_fisica - existencia_sistema)
 );
@@ -401,7 +398,7 @@ CREATE INDEX compras_fecha_idx ON compras (fecha);
 CREATE INDEX detalle_compras_compra_idx ON detalle_compras (compra_id);
 CREATE INDEX ventas_fecha_idx ON ventas (fecha);
 CREATE INDEX detalle_ventas_venta_idx ON detalle_ventas (venta_id);
-CREATE INDEX movimientos_inventario_producto_socio_fecha_idx ON movimientos_inventario (producto_id, socio_id, created_at DESC);
+CREATE INDEX movimientos_inventario_producto_fecha_idx ON movimientos_inventario (producto_id, created_at DESC);
 CREATE INDEX prestamos_cliente_estado_idx ON prestamos (cliente_id, estado);
 CREATE INDEX prestamos_vencimiento_idx ON prestamos (fecha_proximo_pago) WHERE estado IN ('ACTIVO', 'VENCIDO');
 CREATE INDEX intereses_prestamo_pendientes_idx ON intereses_prestamo (prestamo_id, fecha_vencimiento) WHERE saldo_pendiente > 0;

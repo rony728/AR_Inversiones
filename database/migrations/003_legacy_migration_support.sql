@@ -72,7 +72,6 @@ CREATE TABLE inventario_inicial_migracion (
   fuente_id uuid NOT NULL REFERENCES fuentes_migracion(id) ON DELETE RESTRICT,
   producto_legacy_id uuid NOT NULL,
   producto_id uuid REFERENCES productos(id) ON DELETE RESTRICT,
-  socio_id uuid REFERENCES socios(id) ON DELETE RESTRICT,
   existencia_fuente integer NOT NULL,
   existencia_aplicada integer NOT NULL,
   costo_unitario numeric(14,4) NOT NULL,
@@ -81,7 +80,7 @@ CREATE TABLE inventario_inicial_migracion (
   PRIMARY KEY (fuente_id, producto_legacy_id),
   CONSTRAINT inventario_inicial_cantidades_validas CHECK (existencia_fuente >= 0 AND existencia_aplicada >= 0),
   CONSTRAINT inventario_inicial_costo_valido CHECK (costo_unitario >= 0),
-  CONSTRAINT inventario_inicial_estado_valido CHECK (estado IN ('EXCLUIDO', 'PENDIENTE_SOCIO', 'APLICADO'))
+  CONSTRAINT inventario_inicial_estado_valido CHECK (estado IN ('EXCLUIDO', 'APLICADO'))
 );
 
 CREATE TABLE ventas_historicas (
