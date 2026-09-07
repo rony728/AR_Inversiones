@@ -10,6 +10,8 @@ import { Settings } from './pages/Settings';
 import { TransactionPage } from './pages/TransactionPage';
 import { LoansPage } from './pages/LoansPage';
 import { InventoryAuditPage } from './pages/InventoryAuditPage';
+import { ProductsPage } from './pages/ProductsPage';
+import { CategoriesPage } from './pages/CategoriesPage';
 import { beginSyncListener } from './lib/sync';
 import { api } from './lib/api';
 
@@ -20,6 +22,6 @@ export function App() {
   useEffect(() => { if (authenticated && !userName) void api<{ user: { nombre: string } }>('/auth/me').then((result) => { setUserName(result.user.nombre); sessionStorage.setItem('ar-user', JSON.stringify(result.user)); }).catch(() => undefined); }, [authenticated, userName]);
   if (!authenticated) return <Login onLogin={(user) => { setUserName(user.nombre); setAuthenticated(true); }} />;
   return <Shell userName={userName || 'Equipo AR'} onLogout={() => { sessionStorage.removeItem('ar-token'); sessionStorage.removeItem('ar-user'); setUserName(''); setAuthenticated(false); }}><Routes>
-    <Route path="/" element={<Dashboard />} /><Route path="/productos" element={<ModulePage name="productos" />} /><Route path="/compras" element={<TransactionPage kind="compra" />} /><Route path="/ventas" element={<TransactionPage kind="venta" />} /><Route path="/clientes" element={<ModulePage name="clientes" />} /><Route path="/prestamos" element={<LoansPage />} /><Route path="/custodias" element={<Custodias />} /><Route path="/finanzas" element={<Finanzas />} /><Route path="/auditoria" element={<InventoryAuditPage />} /><Route path="/configuracion" element={<Settings />} /><Route path="*" element={<Navigate to="/" replace />} />
+    <Route path="/" element={<Dashboard />} /><Route path="/productos" element={<ProductsPage />} /><Route path="/compras" element={<TransactionPage kind="compra" />} /><Route path="/ventas" element={<TransactionPage kind="venta" />} /><Route path="/clientes" element={<ModulePage name="clientes" />} /><Route path="/prestamos" element={<LoansPage />} /><Route path="/custodias" element={<Custodias />} /><Route path="/finanzas" element={<Finanzas />} /><Route path="/auditoria" element={<InventoryAuditPage />} /><Route path="/configuracion" element={<Settings />} /><Route path="/configuracion/categorias" element={<CategoriesPage />} /><Route path="*" element={<Navigate to="/" replace />} />
   </Routes></Shell>;
 }

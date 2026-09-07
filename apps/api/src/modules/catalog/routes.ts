@@ -4,13 +4,14 @@ import { z } from 'zod';
 import { query, withTransaction } from '../../db/pool.js';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError, asyncHandler } from '../../lib/errors.js';
+import { categoryCreateInput, categoryUpdateInput, productCreateInput, productUpdateInput } from './product-input.js';
 
 type Resource = 'clientes' | 'categorias' | 'proveedores' | 'productos' | 'usuarios';
 const resources: Record<Resource, { fields: readonly string[]; updateFields: readonly string[] }> = {
   clientes: { fields: ['nombre', 'identificacion', 'telefono', 'direccion', 'notas'], updateFields: ['nombre', 'identificacion', 'telefono', 'direccion', 'notas', 'activo'] },
   categorias: { fields: ['nombre'], updateFields: ['nombre', 'activo'] },
   proveedores: { fields: ['nombre', 'identificacion', 'telefono', 'direccion'], updateFields: ['nombre', 'identificacion', 'telefono', 'direccion', 'activo'] },
-  productos: { fields: ['categoria_id', 'codigo', 'nombre', 'descripcion'], updateFields: ['categoria_id', 'codigo', 'nombre', 'descripcion', 'activo'] },
+  productos: { fields: [], updateFields: [] },
   usuarios: { fields: ['nombre', 'usuario', 'password_hash'], updateFields: ['nombre', 'usuario', 'activo'] }
 };
 const id = z.string().uuid();
@@ -68,6 +69,85 @@ catalogRouter.post('/usuarios', asyncHandler(async (req, res) => {
   res.status(201).json({ data: created });
 }));
 
+catalogRouter.post('/categorias', asyncHandler(async (req, res) => {
+  const input = categoryCreateInput.parse(req.body);
+  const created = await withTransaction(async (client) => {
+    const result = await client.query('INSERT INTO categorias (nombre) VALUES ($1) RETURNING *', [input.nombre]);
+    await writeAudit(client, { usuarioId: req.user?.id, entidadTipo: 'categorias', entidadId: result.rows[0].id, accion: 'CREAR', nuevos: result.rows[0] });
+    return result.rows[0];
+  });
+  res.status(201).json({ data: created });
+}));
+
+catalogRouter.patch('/categorias/:id', asyncHandler(async (req, res) => {
+  const categoryId = id.parse(req.params.id);
+  const input = categoryUpdateInput.parse(req.body);
+  const entries = Object.entries(input);
+  const updated = await withTransaction(async (client) => {
+    const before = await client.query('SELECT * FROM categorias WHERE id = $1', [categoryId]);
+    if (!before.rows[0]) throw new AppError(404, 'Categoría no encontrada.', 'NOT_FOUND');
+    const set = entries.map(([field], index) => `${field} = $${index + 1}`).join(', ');
+    const result = await client.query(`UPDATE categorias SET ${set} WHERE id = $${entries.length + 1} RETURNING *`, [...entries.map(([, value]) => value), categoryId]);
+    await writeAudit(client, { usuarioId: req.user?.id, entidadTipo: 'categorias', entidadId: categoryId, accion: 'ACTUALIZAR', anteriores: before.rows[0], nuevos: result.rows[0] });
+    return result.rows[0];
+  });
+  res.json({ data: updated });
+}));
+
+catalogRouter.get('/productos', asyncHandler(async (_req, res) => {
+  const result = await query(`
+    SELECT p.id, p.codigo, p.nombre, p.categoria_id, c.nombre AS categoria,
+           COALESCE(i.existencia, 0)::integer AS cantidad_disponible,
+           COALESCE(i.costo_promedio_unitario, 0)::numeric AS costo_promedio,
+           COALESCE(p.precio_sugerido, 0)::numeric AS precio_venta,
+           COALESCE(p.existencia_minima, 0)::integer AS existencia_minima,
+           p.activo, p.created_at, p.updated_at
+      FROM productos p
+      LEFT JOIN categorias c ON c.id = p.categoria_id
+      LEFT JOIN inventario i ON i.producto_id = p.id
+     ORDER BY p.nombre, p.codigo
+  `);
+  res.json({ data: result.rows });
+}));
+
+catalogRouter.post('/productos', asyncHandler(async (req, res) => {
+  const input = productCreateInput.parse(req.body);
+  const created = await withTransaction(async (client) => {
+    const result = await client.query(
+      `INSERT INTO productos (codigo, sku, nombre, categoria_id, precio_sugerido, activo)
+       VALUES ($1, $1, $2, $3, $4, $5)
+       RETURNING *`,
+      [input.codigo, input.nombre, input.categoriaId, input.precioVenta, input.activo]
+    );
+    await client.query(
+      'INSERT INTO inventario (producto_id, existencia, costo_promedio_unitario) VALUES ($1, 0, 0)',
+      [result.rows[0].id]
+    );
+    await writeAudit(client, { usuarioId: req.user?.id, entidadTipo: 'productos', entidadId: result.rows[0].id, accion: 'CREAR', nuevos: result.rows[0] });
+    return result.rows[0];
+  });
+  res.status(201).json({ data: created });
+}));
+
+catalogRouter.patch('/productos/:id', asyncHandler(async (req, res) => {
+  const productId = id.parse(req.params.id);
+  const input = productUpdateInput.parse(req.body);
+  const fieldMap = { codigo: 'codigo', nombre: 'nombre', categoriaId: 'categoria_id', precioVenta: 'precio_sugerido', activo: 'activo' } as const;
+  const entries = Object.entries(input) as Array<[keyof typeof fieldMap, unknown]>;
+  const updated = await withTransaction(async (client) => {
+    const before = await client.query('SELECT * FROM productos WHERE id = $1', [productId]);
+    if (!before.rows[0]) throw new AppError(404, 'Producto no encontrado.', 'NOT_FOUND');
+    const set = entries.map(([field], index) => `${fieldMap[field]} = $${index + 1}`).join(', ');
+    const result = await client.query(
+      `UPDATE productos SET ${set} WHERE id = $${entries.length + 1} RETURNING *`,
+      [...entries.map(([, value]) => value), productId]
+    );
+    await writeAudit(client, { usuarioId: req.user?.id, entidadTipo: 'productos', entidadId: productId, accion: 'ACTUALIZAR', anteriores: before.rows[0], nuevos: result.rows[0] });
+    return result.rows[0];
+  });
+  res.json({ data: updated });
+}));
+
 catalogRouter.get('/:resource', asyncHandler(async (req, res) => {
   const resource = z.enum(['clientes', 'categorias', 'proveedores', 'productos', 'usuarios']).parse(req.params.resource) as Resource;
   const result = await query(`SELECT ${resource === 'usuarios' ? 'id, nombre, usuario, activo, created_at, updated_at' : '*'} FROM ${resource} ORDER BY created_at DESC`);
@@ -75,7 +155,7 @@ catalogRouter.get('/:resource', asyncHandler(async (req, res) => {
 }));
 
 catalogRouter.post('/:resource', asyncHandler(async (req, res) => {
-  const resource = z.enum(['clientes', 'categorias', 'proveedores', 'productos']).parse(req.params.resource) as Resource;
+  const resource = z.enum(['clientes', 'proveedores']).parse(req.params.resource) as Resource;
   const { fields, values } = permitted(resource, req.body as Record<string, unknown>, resources[resource].fields);
   const created = await withTransaction(async (client) => {
     const result = await client.query(`INSERT INTO ${resource} (${fields.join(', ')}) VALUES (${fields.map((_, index) => `$${index + 1}`).join(', ')}) RETURNING *`, values);
@@ -86,7 +166,7 @@ catalogRouter.post('/:resource', asyncHandler(async (req, res) => {
 }));
 
 catalogRouter.patch('/:resource/:id', asyncHandler(async (req, res) => {
-  const resource = z.enum(['clientes', 'categorias', 'proveedores', 'productos', 'usuarios']).parse(req.params.resource) as Resource;
+  const resource = z.enum(['clientes', 'proveedores', 'usuarios']).parse(req.params.resource) as Resource;
   const resourceId = id.parse(req.params.id);
   const { fields, values } = permitted(resource, req.body as Record<string, unknown>, resources[resource].updateFields);
   const set = fields.map((field, index) => `${field} = $${index + 1}`).join(', ');
