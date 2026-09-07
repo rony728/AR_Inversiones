@@ -6,6 +6,7 @@ import { env } from '../../config/env.js';
 import { query, withTransaction } from '../../db/pool.js';
 import { AppError, asyncHandler } from '../../lib/errors.js';
 import { writeAudit } from '../../lib/audit.js';
+import { requireAuth } from '../../http/middleware/auth.js';
 
 const credentials = z.object({ usuario: z.string().trim().min(3).max(80), password: z.string().min(8).max(200) });
 const bootstrap = credentials.extend({ nombre: z.string().trim().min(2).max(160) });
@@ -16,6 +17,12 @@ const sign = (user: { id: string; usuario: string; nombre: string }) => ({
 });
 
 export const authRouter = Router();
+
+authRouter.get('/me', requireAuth, asyncHandler(async (req, res) => {
+  const result = await query<{ id: string; nombre: string; usuario: string }>('SELECT id,nombre,usuario FROM usuarios WHERE id=$1 AND activo=true', [req.user!.id]);
+  if (!result.rows[0]) throw new AppError(401, 'El usuario autenticado ya no está disponible.', 'UNAUTHORIZED');
+  res.json({ user: result.rows[0] });
+}));
 
 authRouter.post('/bootstrap', asyncHandler(async (req, res) => {
   const input = bootstrap.parse(req.body);

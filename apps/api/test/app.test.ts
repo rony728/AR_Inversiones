@@ -22,3 +22,10 @@ test('las operaciones de venta validan la carga antes de iniciar una transacció
   assert.equal(response.status, 422);
   assert.equal(response.body.error, 'VALIDATION_ERROR');
 });
+
+test('el dashboard exige un rango de fechas válido antes de consultar datos', async () => {
+  const token = jwt.sign({ sub: '00000000-0000-0000-0000-000000000001', usuario: 'prueba' }, 'development-only-secret-change-this-123');
+  const response = await request(app).get('/api/v1/dashboard').set('Authorization', `Bearer ${token}`);
+  assert.equal(response.status, 422);
+  assert.equal(response.body.error, 'VALIDATION_ERROR');
+});

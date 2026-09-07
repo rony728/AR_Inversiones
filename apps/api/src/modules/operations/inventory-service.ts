@@ -6,7 +6,7 @@ import { writeAudit } from '../../lib/audit.js';
 const uuid = z.string().uuid();
 const itemBase = z.object({ productoId: uuid, cantidad: z.coerce.number().int().positive() });
 export const purchaseInput = z.object({ proveedorId: uuid.nullish(), socioId: uuid, custodiaId: uuid, fecha: z.string().date().default(() => new Date().toISOString().slice(0, 10)), observaciones: z.string().max(2000).optional(), items: z.array(itemBase.extend({ costoUnitario: z.coerce.number().min(0) })).min(1) });
-// El socio de una venta identifica la custodia que recibe el dinero; no es dueño del producto.
+// El socio de una venta identifica el fondo que recibe el dinero; no es dueño del producto.
 export const saleInput = z.object({ clienteId: uuid.nullish(), fecha: z.string().datetime().optional(), observaciones: z.string().max(2000).optional(), items: z.array(itemBase.extend({ socioId: uuid, custodiaId: uuid, precioUnitario: z.coerce.number().positive() })).min(1) });
 export type PurchaseInput = z.infer<typeof purchaseInput>;
 export type SaleInput = z.infer<typeof saleInput>;
@@ -17,7 +17,7 @@ export const weightedAverage = (stock: number, average: number, quantity: number
 
 function unique(keys: string[]) { if (new Set(keys).size !== keys.length) throw new AppError(422, 'Un producto no puede repetirse dentro de la misma operación.', 'DUPLICATE_ITEM'); }
 async function lockProduct(client: PoolClient, productId: string) { const result = await client.query('SELECT id FROM productos WHERE id = $1 AND activo = true FOR UPDATE', [productId]); if (!result.rows[0]) throw new AppError(422, 'El producto no existe o está inactivo.', 'INVALID_PRODUCT'); }
-async function lockProductsCustody(client: PoolClient, custodyId: string, partnerId: string) { const result = await client.query<{ saldo_actual: string }>(`SELECT saldo_actual FROM custodias WHERE id = $1 AND socio_id = $2 AND actividad = 'PRODUCTOS' FOR UPDATE`, [custodyId, partnerId]); if (!result.rows[0]) throw new AppError(422, 'La custodia debe ser PRODUCTOS y pertenecer al socio indicado.', 'INVALID_CUSTODY'); return Number(result.rows[0].saldo_actual); }
+async function lockProductsCustody(client: PoolClient, custodyId: string, partnerId: string) { const result = await client.query<{ saldo_actual: string }>(`SELECT saldo_actual FROM custodias WHERE id = $1 AND socio_id = $2 AND actividad = 'PRODUCTOS' FOR UPDATE`, [custodyId, partnerId]); if (!result.rows[0]) throw new AppError(422, 'El fondo debe ser PRODUCTOS y pertenecer al socio indicado.', 'INVALID_CUSTODY'); return Number(result.rows[0].saldo_actual); }
 async function lockInventory(client: PoolClient, productId: string) {
   await client.query(`INSERT INTO inventario (producto_id,existencia,costo_promedio_unitario) VALUES ($1,0,0) ON CONFLICT (producto_id) DO NOTHING`, [productId]);
   return (await client.query<{ existencia: number; costo_promedio_unitario: string }>('SELECT existencia,costo_promedio_unitario FROM inventario WHERE producto_id=$1 FOR UPDATE', [productId])).rows[0];
@@ -28,7 +28,7 @@ export async function registerPurchase(client: PoolClient, input: PurchaseInput,
   const items = input.items.map((item) => ({ ...item, subtotalCents: toCents(item.cantidad * item.costoUnitario) }));
   const totalCents = items.reduce((sum, item) => sum + item.subtotalCents, 0);
   const balance = await lockProductsCustody(client, input.custodiaId, input.socioId);
-  if (toCents(balance) < totalCents) throw new AppError(422, 'La custodia no tiene saldo suficiente para esta compra.', 'INSUFFICIENT_CUSTODY_BALANCE');
+  if (toCents(balance) < totalCents) throw new AppError(422, 'El fondo no tiene saldo suficiente para esta compra.', 'INSUFFICIENT_CUSTODY_BALANCE');
   const purchase = await client.query<{ id: string }>(`INSERT INTO compras (proveedor_id,socio_id,custodia_id,fecha,estado,total,observaciones,created_by) VALUES ($1,$2,$3,$4,'CONFIRMADO',$5,$6,$7) RETURNING id`, [input.proveedorId ?? null, input.socioId, input.custodiaId, input.fecha, money(totalCents), input.observaciones ?? null, userId ?? null]);
   for (const item of items) {
     await lockProduct(client, item.productoId); const prior = await lockInventory(client, item.productoId);

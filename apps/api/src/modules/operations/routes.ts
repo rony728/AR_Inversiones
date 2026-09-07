@@ -7,6 +7,7 @@ import { changeNextPaymentDate, createLoan, loanInput, paymentInput, refreshOver
 import { transferBetweenCustodies, transferInput } from './custody-service.js';
 import { distributionInput, expenseInput, registerExpense, registerProfitDistribution } from './finance-service.js';
 import { approveInventoryAudit, inventoryAuditInput, startInventoryAudit } from './inventory-audit-service.js';
+import { dashboardPeriodInput, getDashboard } from './dashboard-service.js';
 
 const readModels = {
   compras: { table: 'compras', order: 'created_at' }, ventas: { table: 'ventas', order: 'created_at' },
@@ -89,6 +90,12 @@ operationsRouter.post('/sincronizacion', asyncHandler(async (req, res) => {
     return replies;
   });
   res.status(202).json({ results });
+}));
+
+operationsRouter.get('/dashboard', asyncHandler(async (req, res) => {
+  const period = dashboardPeriodInput.parse(req.query);
+  const result = await withTransaction(async (client) => { await refreshOverdueLoans(client, new Date().toISOString().slice(0, 10)); return getDashboard(client, period.desde, period.hasta); });
+  res.json({ data: result });
 }));
 
 operationsRouter.post('/compras', asyncHandler(async (req, res) => {

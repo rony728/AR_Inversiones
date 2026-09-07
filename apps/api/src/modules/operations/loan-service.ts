@@ -15,7 +15,7 @@ type Interest = { id: string; fecha_vencimiento: string; saldo_pendiente: string
 
 export function addMonth(date: string) { const [year, month, day] = date.split('-').map(Number); const targetMonth = month === 12 ? 1 : month + 1; const targetYear = month === 12 ? year + 1 : year; const lastDay = new Date(Date.UTC(targetYear, targetMonth, 0)).getUTCDate(); return `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(Math.min(day, lastDay)).padStart(2, '0')}`; }
 function interestAmount(capital: number, rate: number) { return money(toCents(capital * (rate / 100))); }
-async function lockLoansCustody(client: PoolClient, custodyId: string, partnerId: string) { const result = await client.query<{ saldo_actual: string }>(`SELECT saldo_actual FROM custodias WHERE id=$1 AND socio_id=$2 AND actividad='PRESTAMOS' FOR UPDATE`, [custodyId, partnerId]); if (!result.rows[0]) throw new AppError(422, 'La custodia debe ser PRESTAMOS y pertenecer al socio indicado.', 'INVALID_CUSTODY'); return Number(result.rows[0].saldo_actual); }
+async function lockLoansCustody(client: PoolClient, custodyId: string, partnerId: string) { const result = await client.query<{ saldo_actual: string }>(`SELECT saldo_actual FROM custodias WHERE id=$1 AND socio_id=$2 AND actividad='PRESTAMOS' FOR UPDATE`, [custodyId, partnerId]); if (!result.rows[0]) throw new AppError(422, 'El fondo debe ser PRESTAMOS y pertenecer al socio indicado.', 'INVALID_CUSTODY'); return Number(result.rows[0].saldo_actual); }
 async function createInterest(client: PoolClient, loan: Loan, dueDate: string) { const capital = Number(loan.capital_pendiente); const rate = Number(loan.tasa_mensual); const amount = interestAmount(capital, rate); await client.query(`INSERT INTO intereses_prestamo (prestamo_id,fecha_vencimiento,capital_base,tasa_mensual,monto_interes,saldo_pendiente) VALUES ($1,$2,$3,$4,$5,$5) ON CONFLICT (prestamo_id,fecha_vencimiento) DO NOTHING`, [loan.id, dueDate, money(toCents(capital)), rate, amount]); }
 
 export async function accrueLoanInterest(client: PoolClient, loan: Loan, through: string) {
@@ -32,7 +32,7 @@ export async function refreshOverdueLoans(client: PoolClient, through: string) {
 
 export async function createLoan(client: PoolClient, input: LoanInput, userId?: string) {
   const capitalCents = toCents(input.capital); const balance = await lockLoansCustody(client, input.custodiaId, input.socioId);
-  if (toCents(balance) < capitalCents) throw new AppError(422, 'La custodia de préstamos no tiene saldo suficiente.', 'INSUFFICIENT_CUSTODY_BALANCE');
+  if (toCents(balance) < capitalCents) throw new AppError(422, 'El fondo de préstamos no tiene saldo suficiente.', 'INSUFFICIENT_CUSTODY_BALANCE');
   const nextDate = input.fechaProximoPago ?? addMonth(input.fechaDesembolso);
   const loanResult = await client.query<Loan>(`INSERT INTO prestamos (cliente_id,socio_id,custodia_id,fecha_desembolso,fecha_proximo_pago,tasa_mensual,capital_original,capital_pendiente,estado,observaciones,created_by,calcular_interes_desde) VALUES ($1,$2,$3,$4,$5,$6,$7,$7,'ACTIVO',$8,$9,$4) RETURNING id,socio_id,custodia_id,capital_pendiente,tasa_mensual,fecha_proximo_pago,calcular_interes_desde,estado`, [input.clienteId, input.socioId, input.custodiaId, input.fechaDesembolso, nextDate, input.tasaMensual, money(capitalCents), input.observaciones ?? null, userId ?? null]);
   const loan = loanResult.rows[0]; await createInterest(client, loan, nextDate);

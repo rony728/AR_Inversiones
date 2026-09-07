@@ -31,16 +31,16 @@ type DistributionPartner = z.infer<typeof distributionInput>['socios'][number];
 async function lockCustodies(client: PoolClient, ids: string[]) {
   const uniqueIds = [...new Set(ids)];
   const result = await client.query<Custody>('SELECT id,socio_id,saldo_actual FROM custodias WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE', [uniqueIds]);
-  if (result.rows.length !== uniqueIds.length) throw new AppError(422, 'Una de las custodias seleccionadas no existe.', 'INVALID_CUSTODY');
+  if (result.rows.length !== uniqueIds.length) throw new AppError(422, 'Uno de los fondos seleccionados no existe.', 'INVALID_CUSTODY');
   return new Map(result.rows.map((custody) => [custody.id, custody]));
 }
 
 export async function registerExpense(client: PoolClient, input: z.infer<typeof expenseInput>, userId?: string) {
   const custodias = await lockCustodies(client, [input.custodiaId]);
   const custody = custodias.get(input.custodiaId)!;
-  if (custody.socio_id !== input.socioId) throw new AppError(422, 'La custodia debe pertenecer al socio seleccionado.', 'INVALID_CUSTODY');
+  if (custody.socio_id !== input.socioId) throw new AppError(422, 'El fondo debe pertenecer al socio seleccionado.', 'INVALID_CUSTODY');
   const amountCents = toCents(input.monto); const balanceCents = toCents(Number(custody.saldo_actual));
-  if (balanceCents < amountCents) throw new AppError(422, 'La custodia no tiene saldo suficiente para registrar el gasto.', 'INSUFFICIENT_CUSTODY_BALANCE');
+  if (balanceCents < amountCents) throw new AppError(422, 'El fondo no tiene saldo suficiente para registrar el gasto.', 'INSUFFICIENT_CUSTODY_BALANCE');
   const expense = await client.query<{ id: string }>('INSERT INTO gastos (socio_id,custodia_id,concepto,monto,fecha,estado,created_by) VALUES ($1,$2,$3,$4,$5,\'CONFIRMADO\',$6) RETURNING id', [input.socioId, input.custodiaId, input.concepto, money(amountCents), input.fecha, userId ?? null]);
   const after = money(balanceCents - amountCents);
   await client.query('UPDATE custodias SET saldo_actual=$1 WHERE id=$2', [after, input.custodiaId]);
@@ -70,7 +70,7 @@ export async function registerProfitDistribution(client: PoolClient, input: z.in
   const pendingMovements: Array<{ custody: Custody; cents: number; beneficiaryId: string; covererId: string; type: 'DISTRIBUCION_UTILIDAD' | 'COBERTURA_DISTRIBUCION' }> = [];
   for (const partner of input.socios) {
     const own = custodias.get(partner.custodiaId);
-    if (!own || own.socio_id !== partner.socioBeneficiarioId) throw new AppError(422, 'La custodia base debe pertenecer al socio beneficiario.', 'INVALID_CUSTODY');
+    if (!own || own.socio_id !== partner.socioBeneficiarioId) throw new AppError(422, 'El fondo base debe pertenecer al socio beneficiario.', 'INVALID_CUSTODY');
     const ownDebit = Math.min(balances.get(own.id) ?? 0, shareCents);
     if (ownDebit > 0) { pendingMovements.push({ custody: own, cents: ownDebit, beneficiaryId: partner.socioBeneficiarioId, covererId: partner.socioBeneficiarioId, type: 'DISTRIBUCION_UTILIDAD' }); balances.set(own.id, (balances.get(own.id) ?? 0) - ownDebit); }
     const shortage = shareCents - ownDebit;
@@ -89,11 +89,11 @@ export async function registerProfitDistribution(client: PoolClient, input: z.in
 }
 
 function addCoverage(partner: DistributionPartner, custodias: Map<string, Custody>, balances: Map<string, number>, movements: Array<{ custody: Custody; cents: number; beneficiaryId: string; covererId: string; type: 'DISTRIBUCION_UTILIDAD' | 'COBERTURA_DISTRIBUCION' }>, shortage: number) {
-  if (!partner.socioCubridorId || !partner.custodiaCoberturaId) throw new AppError(422, 'Debes seleccionar el socio y la custodia que cubrirán la diferencia.', 'DISTRIBUTION_COVERAGE_REQUIRED');
+  if (!partner.socioCubridorId || !partner.custodiaCoberturaId) throw new AppError(422, 'Debes seleccionar el socio y el fondo que cubrirá la diferencia.', 'DISTRIBUTION_COVERAGE_REQUIRED');
   const cover = custodias.get(partner.custodiaCoberturaId);
-  if (!cover || cover.socio_id !== partner.socioCubridorId) throw new AppError(422, 'La custodia de cobertura debe pertenecer al socio cubridor.', 'INVALID_COVERAGE_CUSTODY');
+  if (!cover || cover.socio_id !== partner.socioCubridorId) throw new AppError(422, 'El fondo de cobertura debe pertenecer al socio cubridor.', 'INVALID_COVERAGE_CUSTODY');
   const coverBalance = balances.get(cover.id) ?? 0;
-  if (coverBalance < shortage) throw new AppError(422, 'La custodia de cobertura no tiene saldo suficiente para cubrir la diferencia.', 'INSUFFICIENT_COVERAGE_BALANCE');
+  if (coverBalance < shortage) throw new AppError(422, 'El fondo de cobertura no tiene saldo suficiente para cubrir la diferencia.', 'INSUFFICIENT_COVERAGE_BALANCE');
   balances.set(cover.id, coverBalance - shortage);
   movements.push({ custody: cover, cents: shortage, beneficiaryId: partner.socioBeneficiarioId, covererId: partner.socioCubridorId, type: 'COBERTURA_DISTRIBUCION' });
 }
