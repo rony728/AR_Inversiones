@@ -1,0 +1,24 @@
+import { deleteDB, openDB, type DBSchema } from 'idb';
+
+export type LocalStore = 'productos' | 'clientes' | 'ventas' | 'compras' | 'prestamos' | 'pagosPrestamo' | 'inventario' | 'custodias' | 'movimientosFinancieros' | 'gastos' | 'distribuciones' | 'auditorias' | 'configuracion';
+export type SyncStatus = 'PENDIENTE' | 'ENVIADA' | 'ERROR';
+export type LocalRecord = { id: string; data: Record<string, unknown>; updatedAt: string; dirty: boolean };
+export type QueuedOperation = { id: string; idempotencyKey: string; store: LocalStore; entityType: string; entityId: string; action: 'CREATE' | 'UPDATE' | 'REVERSE'; payload: Record<string, unknown>; createdAt: string; retryCount: number; status: SyncStatus; lastError?: string };
+
+interface ArDatabase extends DBSchema {
+  productos: { key: string; value: LocalRecord }; clientes: { key: string; value: LocalRecord }; ventas: { key: string; value: LocalRecord }; compras: { key: string; value: LocalRecord }; prestamos: { key: string; value: LocalRecord }; pagosPrestamo: { key: string; value: LocalRecord }; inventario: { key: string; value: LocalRecord }; custodias: { key: string; value: LocalRecord }; movimientosFinancieros: { key: string; value: LocalRecord }; gastos: { key: string; value: LocalRecord }; distribuciones: { key: string; value: LocalRecord }; auditorias: { key: string; value: LocalRecord }; configuracion: { key: string; value: LocalRecord };
+  colaSincronizacion: { key: string; value: QueuedOperation; indexes: { 'by-status': SyncStatus; 'by-created-at': string } };
+}
+
+const stores: LocalStore[] = ['productos', 'clientes', 'ventas', 'compras', 'prestamos', 'pagosPrestamo', 'inventario', 'custodias', 'movimientosFinancieros', 'gastos', 'distribuciones', 'auditorias', 'configuracion'];
+const database = () => openDB<ArDatabase>('ar-inversiones-offline', 3, { upgrade(db) { stores.forEach((store) => { if (!db.objectStoreNames.contains(store)) db.createObjectStore(store, { keyPath: 'id' }); }); if (!db.objectStoreNames.contains('colaSincronizacion')) { const queue = db.createObjectStore('colaSincronizacion', { keyPath: 'id' }); queue.createIndex('by-status', 'status'); queue.createIndex('by-created-at', 'createdAt'); } } });
+const uuid = () => crypto.randomUUID();
+
+export async function cacheList(store: LocalStore, rows: Record<string, unknown>[]) { const db = await database(); const tx = db.transaction(store, 'readwrite'); await Promise.all(rows.filter((row) => typeof row.id === 'string').map((row) => tx.store.put({ id: row.id as string, data: row, updatedAt: new Date().toISOString(), dirty: false }))); await tx.done; }
+export async function getCachedList(store: LocalStore) { return (await (await database()).getAll(store)).map((record) => record.data); }
+export async function queueMutation(store: LocalStore, entityType: string, entityId: string, action: QueuedOperation['action'], payload: Record<string, unknown>) { const db = await database(); const tx = db.transaction([store, 'colaSincronizacion'], 'readwrite'); await tx.objectStore(store).put({ id: entityId, data: payload, updatedAt: new Date().toISOString(), dirty: true }); const operation: QueuedOperation = { id: uuid(), idempotencyKey: uuid(), store, entityType, entityId, action, payload, createdAt: new Date().toISOString(), retryCount: 0, status: 'PENDIENTE' }; await tx.objectStore('colaSincronizacion').put(operation); await tx.done; return operation; }
+export async function queuedOperations() { return (await (await database()).getAllFromIndex('colaSincronizacion', 'by-created-at')).filter((operation) => operation.status !== 'ENVIADA'); }
+export async function markOperation(operation: QueuedOperation, status: SyncStatus, error?: string) { const db = await database(); const tx = db.transaction([operation.store, 'colaSincronizacion'], 'readwrite'); await tx.objectStore('colaSincronizacion').put({ ...operation, status, retryCount: operation.retryCount + (status === 'ERROR' ? 1 : 0), lastError: error }); if (status === 'ENVIADA') { const current = await tx.objectStore(operation.store).get(operation.entityId); if (current) await tx.objectStore(operation.store).put({ ...current, dirty: false }); } await tx.done; }
+export async function pendingCount() { return (await (await database()).countFromIndex('colaSincronizacion', 'by-status', 'PENDIENTE')) + (await (await database()).countFromIndex('colaSincronizacion', 'by-status', 'ERROR')); }
+export async function deviceId() { const db = await database(); const existing = await db.get('configuracion', 'device-id'); if (existing?.data.value && typeof existing.data.value === 'string') return existing.data.value; const value = uuid(); await db.put('configuracion', { id: 'device-id', data: { value }, updatedAt: new Date().toISOString(), dirty: false }); return value; }
+export async function resetOfflineDatabase() { await deleteDB('ar-inversiones-offline'); }

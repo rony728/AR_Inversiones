@@ -1,0 +1,62 @@
+{
+  "excludedProducts": [
+    "Adaptador OTG todo 7 en 1",
+    "Akg tipo-C",
+    "Camaras ip siglo yosee",
+    "CINTA LED ROJO",
+    "Holder para motocicleta",
+    "Mochilas militares",
+    "Otg 6 en 1",
+    "Repetidor tenda A9 Amazon"
+  ],
+  "stockOverrides": {
+    "AKG replicas": 11,
+    "Cable para iPhone 2 metros": 6,
+    "Cable TIPO-C A TIPO-C blanco": 2,
+    "Cantimplora militar": 3,
+    "Cargador 65 w negro": 2,
+    "Holder retrovisor extensible carro": 6,
+    "Holder sencillo motociclista": 6,
+    "Otg para SD": 5,
+    "Otg tipo C": 18,
+    "Repetidor tenda A1200": 3
+  },
+  "ignoredSuggestedPrices": [
+    "Cable tipo-C a tipo-C iPhone 15",
+    "Fan cooler"
+  ],
+  "loanRateOverrides": {
+    "Pedro Escobar": 15,
+    "Suegra de Carlos López": 15,
+    "Novia de Carlos": 15
+  },
+  "paymentDateOverridesBySourceRow": {
+    "70": "2022-08-18",
+    "176": "2023-02-28",
+    "177": "2023-02-28",
+    "178": "2023-02-28",
+    "179": "2023-02-28",
+    "180": "2023-02-28",
+    "466": "2024-02-29",
+    "670": "2025-02-28",
+    "725": "2025-04-30",
+    "730": "2025-05-09",
+    "748": "2025-06-09",
+    "766": "2025-07-09",
+    "925": "2026-02-03",
+    "941": "2026-02-28",
+    "1024": "2024-07-08"
+  },
+  "paymentPartnerOverridesBySourceRow": {
+    "595": "Brian"
+  },
+  "distributionDateOverridesBySourceRow": {
+    "66": "2024-01-11",
+    "67": "2024-01-11",
+    "68": "2024-01-11",
+    "145": "2026-03-07",
+    "146": "2026-03-07",
+    "147": "2026-03-07"
+  },
+  "legacyDistributionRowsWithoutPartner": [96]
+}

@@ -1,0 +1,64 @@
+import type { PoolClient } from 'pg';
+import { z } from 'zod';
+import { AppError } from '../../lib/errors.js';
+import { writeAudit } from '../../lib/audit.js';
+
+const uuid = z.string().uuid();
+const itemBase = z.object({ productoId: uuid, cantidad: z.coerce.number().int().positive() });
+export const purchaseInput = z.object({ proveedorId: uuid.nullish(), socioId: uuid, custodiaId: uuid, fecha: z.string().date().default(() => new Date().toISOString().slice(0, 10)), observaciones: z.string().max(2000).optional(), items: z.array(itemBase.extend({ costoUnitario: z.coerce.number().min(0) })).min(1) });
+export const saleInput = z.object({ clienteId: uuid.nullish(), fecha: z.string().datetime().optional(), observaciones: z.string().max(2000).optional(), items: z.array(itemBase.extend({ socioId: uuid, custodiaId: uuid, precioUnitario: z.coerce.number().positive() })).min(1) });
+export type PurchaseInput = z.infer<typeof purchaseInput>;
+export type SaleInput = z.infer<typeof saleInput>;
+
+export const toCents = (value: number) => Math.round(value * 100);
+export const money = (cents: number) => (cents / 100).toFixed(2);
+export const weightedAverage = (stock: number, average: number, quantity: number, cost: number) => Math.round((((stock * average) + (quantity * cost)) / (stock + quantity)) * 10000) / 10000;
+
+function unique(keys: string[]) { if (new Set(keys).size !== keys.length) throw new AppError(422, 'Un producto no puede repetirse dentro de la misma operación para el mismo socio.', 'DUPLICATE_ITEM'); }
+async function lockProduct(client: PoolClient, productId: string) { const result = await client.query('SELECT id FROM productos WHERE id = $1 AND activo = true FOR UPDATE', [productId]); if (!result.rows[0]) throw new AppError(422, 'El producto no existe o está inactivo.', 'INVALID_PRODUCT'); }
+async function lockProductsCustody(client: PoolClient, custodyId: string, partnerId: string) { const result = await client.query<{ saldo_actual: string }>(`SELECT saldo_actual FROM custodias WHERE id = $1 AND socio_id = $2 AND actividad = 'PRODUCTOS' FOR UPDATE`, [custodyId, partnerId]); if (!result.rows[0]) throw new AppError(422, 'La custodia debe ser PRODUCTOS y pertenecer al socio indicado.', 'INVALID_CUSTODY'); return Number(result.rows[0].saldo_actual); }
+
+export async function registerPurchase(client: PoolClient, input: PurchaseInput, userId?: string) {
+  unique(input.items.map((item) => item.productoId));
+  const items = input.items.map((item) => ({ ...item, subtotalCents: toCents(item.cantidad * item.costoUnitario) }));
+  const totalCents = items.reduce((sum, item) => sum + item.subtotalCents, 0);
+  const balance = await lockProductsCustody(client, input.custodiaId, input.socioId);
+  if (toCents(balance) < totalCents) throw new AppError(422, 'La custodia no tiene saldo suficiente para esta compra.', 'INSUFFICIENT_CUSTODY_BALANCE');
+  const purchase = await client.query<{ id: string }>(`INSERT INTO compras (proveedor_id, socio_id, custodia_id, fecha, estado, total, observaciones, created_by) VALUES ($1,$2,$3,$4,'CONFIRMADO',$5,$6,$7) RETURNING id`, [input.proveedorId ?? null, input.socioId, input.custodiaId, input.fecha, money(totalCents), input.observaciones ?? null, userId ?? null]);
+  for (const item of items) {
+    await lockProduct(client, item.productoId);
+    const prior = await client.query<{ existencia: number; costo_promedio_unitario: string }>('SELECT existencia, costo_promedio_unitario FROM inventario_por_socio WHERE producto_id=$1 AND socio_id=$2 FOR UPDATE', [item.productoId, input.socioId]);
+    const stock = prior.rows[0]?.existencia ?? 0; const average = Number(prior.rows[0]?.costo_promedio_unitario ?? 0); const newStock = stock + item.cantidad; const newAverage = weightedAverage(stock, average, item.cantidad, item.costoUnitario);
+    await client.query(`INSERT INTO inventario_por_socio (producto_id,socio_id,existencia,costo_promedio_unitario) VALUES ($1,$2,$3,$4) ON CONFLICT (producto_id,socio_id) DO UPDATE SET existencia=EXCLUDED.existencia,costo_promedio_unitario=EXCLUDED.costo_promedio_unitario,updated_at=now()`, [item.productoId, input.socioId, newStock, newAverage]);
+    await client.query('INSERT INTO detalle_compras (compra_id,producto_id,cantidad,costo_unitario,subtotal) VALUES ($1,$2,$3,$4,$5)', [purchase.rows[0].id, item.productoId, item.cantidad, item.costoUnitario, money(item.subtotalCents)]);
+    await client.query(`INSERT INTO movimientos_inventario (producto_id,socio_id,tipo,cantidad,existencia_anterior,existencia_posterior,costo_unitario,referencia_tipo,referencia_id,created_by) VALUES ($1,$2,'COMPRA',$3,$4,$5,$6,'COMPRA',$7,$8)`, [item.productoId, input.socioId, item.cantidad, stock, newStock, item.costoUnitario, purchase.rows[0].id, userId ?? null]);
+  }
+  const newBalance = money(toCents(balance) - totalCents);
+  await client.query('UPDATE custodias SET saldo_actual=$1 WHERE id=$2', [newBalance, input.custodiaId]);
+  await client.query(`INSERT INTO movimientos_custodia (custodia_id,tipo,variacion,saldo_anterior,saldo_posterior,referencia_tipo,referencia_id,created_by) VALUES ($1,'COMPRA',$2,$3,$4,'COMPRA',$5,$6)`, [input.custodiaId, money(-totalCents), balance, newBalance, purchase.rows[0].id, userId ?? null]);
+  await client.query(`INSERT INTO movimientos_financieros (tipo,fecha,monto,socio_id,referencia_tipo,referencia_id,descripcion) VALUES ('COMPRA_INVENTARIO',$1,$2,$3,'COMPRA',$4,$5)`, [input.fecha, money(totalCents), input.socioId, purchase.rows[0].id, input.observaciones ?? 'Compra de inventario']);
+  await writeAudit(client, { usuarioId: userId, entidadTipo: 'compra', entidadId: purchase.rows[0].id, accion: 'CONFIRMAR', nuevos: { total: money(totalCents), socioId: input.socioId } });
+  return { id: purchase.rows[0].id, total: money(totalCents) };
+}
+
+export async function registerSale(client: PoolClient, input: SaleInput, userId?: string) {
+  unique(input.items.map((item) => `${item.productoId}:${item.socioId}`));
+  const sale = await client.query<{ id: string }>(`INSERT INTO ventas (cliente_id, fecha, estado, total, ganancia_total, observaciones, created_by) VALUES ($1,COALESCE($2::timestamptz,now()),'BORRADOR',0,0,$3,$4) RETURNING id`, [input.clienteId ?? null, input.fecha ?? null, input.observaciones ?? null, userId ?? null]);
+  let totalCents = 0; let profitCents = 0; const custodyChanges = new Map<string, { partnerId: string; before: number; amountCents: number }>();
+  for (const item of input.items) {
+    await lockProduct(client, item.productoId); const balance = await lockProductsCustody(client, item.custodiaId, item.socioId);
+    const inventory = await client.query<{ existencia: number; costo_promedio_unitario: string }>('SELECT existencia,costo_promedio_unitario FROM inventario_por_socio WHERE producto_id=$1 AND socio_id=$2 FOR UPDATE', [item.productoId, item.socioId]);
+    if (!inventory.rows[0] || inventory.rows[0].existencia < item.cantidad) throw new AppError(422, 'No hay inventario suficiente para completar la venta.', 'INSUFFICIENT_STOCK');
+    const costUnit = Number(inventory.rows[0].costo_promedio_unitario); const subtotalCents = toCents(item.cantidad * item.precioUnitario); const costCents = toCents(item.cantidad * costUnit); const itemProfit = subtotalCents - costCents; const afterStock = inventory.rows[0].existencia - item.cantidad;
+    await client.query('UPDATE inventario_por_socio SET existencia=$1,updated_at=now() WHERE producto_id=$2 AND socio_id=$3', [afterStock, item.productoId, item.socioId]);
+    await client.query(`INSERT INTO detalle_ventas (venta_id,producto_id,socio_id,custodia_id,cantidad,precio_unitario,costo_unitario,subtotal,costo_total,ganancia) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [sale.rows[0].id, item.productoId, item.socioId, item.custodiaId, item.cantidad, item.precioUnitario, costUnit, money(subtotalCents), money(costCents), money(itemProfit)]);
+    await client.query(`INSERT INTO movimientos_inventario (producto_id,socio_id,tipo,cantidad,existencia_anterior,existencia_posterior,costo_unitario,referencia_tipo,referencia_id,created_by) VALUES ($1,$2,'VENTA',$3,$4,$5,$6,'VENTA',$7,$8)`, [item.productoId, item.socioId, -item.cantidad, inventory.rows[0].existencia, afterStock, costUnit, sale.rows[0].id, userId ?? null]);
+    const change = custodyChanges.get(item.custodiaId) ?? { partnerId: item.socioId, before: balance, amountCents: 0 }; change.amountCents += subtotalCents; custodyChanges.set(item.custodiaId, change);
+    await client.query(`INSERT INTO movimientos_financieros (tipo,fecha,monto,socio_id,referencia_tipo,referencia_id,descripcion) VALUES ('INGRESO_VENTA',CURRENT_DATE,$1,$2,'VENTA',$3,$4), ('COSTO_VENTA',CURRENT_DATE,$5,$2,'VENTA',$3,$4)`, [money(subtotalCents), item.socioId, sale.rows[0].id, input.observaciones ?? 'Venta de inventario', money(costCents)]);
+    totalCents += subtotalCents; profitCents += itemProfit;
+  }
+  for (const [custodyId, change] of custodyChanges) { const after = money(toCents(change.before) + change.amountCents); await client.query('UPDATE custodias SET saldo_actual=$1 WHERE id=$2', [after, custodyId]); await client.query(`INSERT INTO movimientos_custodia (custodia_id,tipo,variacion,saldo_anterior,saldo_posterior,referencia_tipo,referencia_id,created_by) VALUES ($1,'VENTA',$2,$3,$4,'VENTA',$5,$6)`, [custodyId, money(change.amountCents), change.before, after, sale.rows[0].id, userId ?? null]); }
+  await client.query(`UPDATE ventas SET estado='CONFIRMADO',total=$1,ganancia_total=$2 WHERE id=$3`, [money(totalCents), money(profitCents), sale.rows[0].id]);
+  await writeAudit(client, { usuarioId: userId, entidadTipo: 'venta', entidadId: sale.rows[0].id, accion: 'CONFIRMAR', nuevos: { total: money(totalCents), ganancia: money(profitCents) } });
+  return { id: sale.rows[0].id, total: money(totalCents), ganancia: money(profitCents) };
+}

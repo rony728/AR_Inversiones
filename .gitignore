@@ -1,0 +1,35 @@
+# Dependencias y resultados de compilación
+node_modules/
+dist/
+coverage/
+.vite/
+.turbo/
+
+# Variables locales, secretos y registros
+.env
+.env.*
+!.env.example
+*.log
+logs/
+
+# Datos y artefactos operativos locales
+AR_Inversiones_Migracion_V2.xlsx
+*.sqlite
+*.sqlite3
+*.db
+database/backups/
+database/exports/
+database/migration/stage11-input.json
+
+# Archivos temporales y del sistema
+*.tmp
+*.temp
+*.cache
+*.swp
+*.swo
+*.bak
+*.orig
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

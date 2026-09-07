@@ -1,0 +1,14 @@
+{
+  "custodyBalances": {
+    "Rony.PRODUCTOS": null,
+    "Rony.PRESTAMOS": null,
+    "Alex.PRODUCTOS": null,
+    "Alex.PRESTAMOS": null,
+    "Brian.PRODUCTOS": null,
+    "Brian.PRESTAMOS": null
+  },
+  "inventoryOwnership": {
+    "defaultPartner": null,
+    "byProductId": {}
+  }
+}
