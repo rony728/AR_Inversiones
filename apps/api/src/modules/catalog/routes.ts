@@ -5,10 +5,10 @@ import { query, withTransaction } from '../../db/pool.js';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError, asyncHandler } from '../../lib/errors.js';
 import { categoryCreateInput, categoryUpdateInput, productCreateInput, productUpdateInput } from './product-input.js';
+import { clientCreateInput, clientListSql, clientUpdateInput, createClient, summarizeClientLoans, updateClient } from './client-service.js';
 
-type Resource = 'clientes' | 'categorias' | 'proveedores' | 'productos' | 'usuarios';
+type Resource = 'categorias' | 'proveedores' | 'productos' | 'usuarios';
 const resources: Record<Resource, { fields: readonly string[]; updateFields: readonly string[] }> = {
-  clientes: { fields: ['nombre', 'identificacion', 'telefono', 'direccion', 'notas'], updateFields: ['nombre', 'identificacion', 'telefono', 'direccion', 'notas', 'activo'] },
   categorias: { fields: ['nombre'], updateFields: ['nombre', 'activo'] },
   proveedores: { fields: ['nombre', 'identificacion', 'telefono', 'direccion'], updateFields: ['nombre', 'identificacion', 'telefono', 'direccion', 'activo'] },
   productos: { fields: [], updateFields: [] },
@@ -24,6 +24,50 @@ function permitted(resource: Resource, source: Record<string, unknown>, keys: re
 }
 
 export const catalogRouter = Router();
+
+catalogRouter.get('/clientes', asyncHandler(async (_req, res) => {
+  const result = await query(clientListSql);
+  res.json({ data: result.rows });
+}));
+
+catalogRouter.get('/clientes/:id', asyncHandler(async (req, res) => {
+  const clientId = id.parse(req.params.id);
+  const detail = await withTransaction(async (client) => {
+    const clientResult = await client.query('SELECT * FROM clientes WHERE id=$1', [clientId]);
+    if (!clientResult.rows[0]) throw new AppError(404, 'Cliente no encontrado.', 'NOT_FOUND');
+    const loansResult = await client.query(
+      `SELECT id,fecha_desembolso,capital_original,capital_pendiente,tasa_mensual,fecha_proximo_pago,estado
+         FROM prestamos WHERE cliente_id=$1 ORDER BY fecha_desembolso DESC NULLS LAST,created_at DESC`, [clientId]
+    );
+    const salesResult = await client.query(
+      `SELECT id,fecha,total,ganancia_total,estado
+         FROM ventas WHERE cliente_id=$1 ORDER BY fecha DESC,created_at DESC`, [clientId]
+    );
+    const loanSummary = summarizeClientLoans(loansResult.rows as Array<{ estado: string; capital_pendiente: string }>);
+    const confirmedSales = salesResult.rows.filter((sale) => sale.estado === 'CONFIRMADO');
+    const soldTotal = confirmedSales.reduce((sum, sale) => sum + Number(sale.total), 0);
+    return {
+      cliente: clientResult.rows[0],
+      resumen: { prestamosActivos: loanSummary.activos, prestamosVencidos: loanSummary.vencidos, capitalPendienteTotal: loanSummary.capitalPendiente, prestamosPagados: loanSummary.pagados, cantidadVentas: confirmedSales.length, totalVendido: soldTotal },
+      prestamos: loansResult.rows,
+      ventas: salesResult.rows
+    };
+  });
+  res.json({ data: detail });
+}));
+
+catalogRouter.post('/clientes', asyncHandler(async (req, res) => {
+  const input = clientCreateInput.parse(req.body);
+  const created = await withTransaction((client) => createClient(client, input, req.user?.id));
+  res.status(201).json({ data: created });
+}));
+
+catalogRouter.patch('/clientes/:id', asyncHandler(async (req, res) => {
+  const clientId = id.parse(req.params.id);
+  const input = clientUpdateInput.parse(req.body);
+  const updated = await withTransaction((client) => updateClient(client, clientId, input, req.user?.id));
+  res.json({ data: updated });
+}));
 
 catalogRouter.get('/socios', asyncHandler(async (_req, res) => {
   const result = await query(`SELECT s.*, COALESCE(json_agg(json_build_object('id', c.id, 'actividad', c.actividad, 'saldo_actual', c.saldo_actual)) FILTER (WHERE c.id IS NOT NULL), '[]') AS custodias FROM socios s LEFT JOIN custodias c ON c.socio_id = s.id GROUP BY s.id ORDER BY s.nombre`);
@@ -149,13 +193,13 @@ catalogRouter.patch('/productos/:id', asyncHandler(async (req, res) => {
 }));
 
 catalogRouter.get('/:resource', asyncHandler(async (req, res) => {
-  const resource = z.enum(['clientes', 'categorias', 'proveedores', 'productos', 'usuarios']).parse(req.params.resource) as Resource;
+  const resource = z.enum(['categorias', 'proveedores', 'productos', 'usuarios']).parse(req.params.resource) as Resource;
   const result = await query(`SELECT ${resource === 'usuarios' ? 'id, nombre, usuario, activo, created_at, updated_at' : '*'} FROM ${resource} ORDER BY created_at DESC`);
   res.json({ data: result.rows });
 }));
 
 catalogRouter.post('/:resource', asyncHandler(async (req, res) => {
-  const resource = z.enum(['clientes', 'proveedores']).parse(req.params.resource) as Resource;
+  const resource = z.literal('proveedores').parse(req.params.resource) as Resource;
   const { fields, values } = permitted(resource, req.body as Record<string, unknown>, resources[resource].fields);
   const created = await withTransaction(async (client) => {
     const result = await client.query(`INSERT INTO ${resource} (${fields.join(', ')}) VALUES (${fields.map((_, index) => `$${index + 1}`).join(', ')}) RETURNING *`, values);
@@ -166,7 +210,7 @@ catalogRouter.post('/:resource', asyncHandler(async (req, res) => {
 }));
 
 catalogRouter.patch('/:resource/:id', asyncHandler(async (req, res) => {
-  const resource = z.enum(['clientes', 'proveedores', 'usuarios']).parse(req.params.resource) as Resource;
+  const resource = z.enum(['proveedores', 'usuarios']).parse(req.params.resource) as Resource;
   const resourceId = id.parse(req.params.id);
   const { fields, values } = permitted(resource, req.body as Record<string, unknown>, resources[resource].updateFields);
   const set = fields.map((field, index) => `${field} = $${index + 1}`).join(', ');

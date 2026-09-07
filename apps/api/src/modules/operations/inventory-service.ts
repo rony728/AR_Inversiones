@@ -2,6 +2,7 @@ import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { AppError } from '../../lib/errors.js';
 import { writeAudit } from '../../lib/audit.js';
+import { requireActiveClient } from './client-guard.js';
 
 const uuid = z.string().uuid();
 const itemBase = z.object({ productoId: uuid, cantidad: z.coerce.number().int().positive() });
@@ -55,6 +56,7 @@ export async function registerPurchase(client: PoolClient, input: PurchaseInput,
 
 export async function registerSale(client: PoolClient, input: SaleInput, userId?: string) {
   unique(input.items.map((item) => item.productoId));
+  if (input.clienteId) await requireActiveClient(client, input.clienteId);
   const financialDate = saleFinancialDate(input.fecha);
   const sale = await client.query<{ id: string }>(`INSERT INTO ventas (cliente_id,fecha,estado,total,ganancia_total,observaciones,created_by) VALUES ($1,COALESCE($2::timestamptz,now()),'BORRADOR',0,0,$3,$4) RETURNING id`, [input.clienteId ?? null, input.fecha ?? null, input.observaciones ?? null, userId ?? null]);
   let totalCents = 0; let profitCents = 0; const custodyChanges = new Map<string, { before: number; amountCents: number }>();

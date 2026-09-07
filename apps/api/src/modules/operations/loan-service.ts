@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { AppError } from '../../lib/errors.js';
 import { writeAudit } from '../../lib/audit.js';
 import { money, toCents } from './inventory-service.js';
+import { requireActiveClient } from './client-guard.js';
 
 const uuid = z.string().uuid();
 const isoDate = z.string().date();
@@ -31,6 +32,7 @@ export async function refreshOverdueLoans(client: PoolClient, through: string) {
 }
 
 export async function createLoan(client: PoolClient, input: LoanInput, userId?: string) {
+  await requireActiveClient(client, input.clienteId);
   const capitalCents = toCents(input.capital); const balance = await lockLoansCustody(client, input.custodiaId, input.socioId);
   if (toCents(balance) < capitalCents) throw new AppError(422, 'El fondo de préstamos no tiene saldo suficiente.', 'INSUFFICIENT_CUSTODY_BALANCE');
   const nextDate = input.fechaProximoPago ?? addMonth(input.fechaDesembolso);
