@@ -4,6 +4,7 @@ import { dashboardPeriodInput, netPeriodProfit } from '../src/modules/operations
 
 test('calcula ganancia neta sin tratar capital ni transferencias como ingreso', () => {
   assert.equal(netPeriodProfit(1200, 300, 450), 1050);
+  assert.equal(netPeriodProfit(1200, 300, 450, 200, 500), 750);
 });
 
 test('valida un período inclusivo y rechaza fechas invertidas', () => {

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { query, withTransaction } from '../../db/pool.js';
 import { AppError, asyncHandler } from '../../lib/errors.js';
 import { purchaseInput, registerPurchase, registerSale, saleInput } from './inventory-service.js';
-import { changeNextPaymentDate, createLoan, loanInput, paymentInput, refreshOverdueLoans, registerLoanPayment } from './loan-service.js';
+import { badDebtInput, cancelLoan, changeNextPaymentDate, createLoan, declareBadDebt, getLoanDetail, loanInput, loanListSql, paymentInput, previewLoanPayment, recoveryInput, registerBadDebtRecovery, registerLoanPayment, rescheduleInput, reversalInput, reverseBadDebtRecovery, reverseLoanPayment, refreshOverdueLoans } from './loan-service.js';
 import { transferBetweenCustodies, transferInput } from './custody-service.js';
 import { distributionInput, expenseInput, registerExpense, registerProfitDistribution } from './finance-service.js';
 import { approveInventoryAudit, inventoryAuditInput, startInventoryAudit } from './inventory-audit-service.js';
@@ -61,7 +61,7 @@ operationsRouter.post('/sincronizacion', asyncHandler(async (req, res) => {
       }
       if (inserted.rows[0].inserted && operation.action === 'CREATE' && operation.entityType === 'pago_prestamo') {
         const payload = z.object({ prestamoId: z.string().uuid(), fechaPago: z.string().date().optional(), monto: z.coerce.number().positive() }).parse(operation.payload);
-        await registerLoanPayment(client, payload.prestamoId, paymentInput.parse(payload));
+        await registerLoanPayment(client, payload.prestamoId, paymentInput.parse({ fechaPago: payload.fechaPago, monto: payload.monto }));
         status = 'APLICADA';
         await client.query(`UPDATE operaciones_sincronizacion SET estado='APLICADA', aplicado_at=now() WHERE clave_idempotencia=$1`, [operation.idempotencyKey]);
       }
@@ -174,14 +174,57 @@ operationsRouter.post('/prestamos/:id/pagos', asyncHandler(async (req, res) => {
   res.status(201).json({ data: result });
 }));
 
+operationsRouter.get('/prestamos/:id/liquidacion', asyncHandler(async (req, res) => {
+  const loanId = z.string().uuid().parse(req.params.id);
+  const input = z.object({ fechaPago: z.string().date(), monto: z.coerce.number().positive().optional() }).parse(req.query);
+  const result = await withTransaction((client) => previewLoanPayment(client, loanId, input.fechaPago, input.monto));
+  res.json({ data: result });
+}));
+
 operationsRouter.patch('/prestamos/:id/fecha-proximo-pago', asyncHandler(async (req, res) => {
-  const loanId = z.string().uuid().parse(req.params.id); const nextDate = z.object({ fechaProximoPago: z.string().date() }).parse(req.body).fechaProximoPago;
-  const result = await withTransaction((client) => changeNextPaymentDate(client, loanId, nextDate, req.user?.id));
+  const loanId = z.string().uuid().parse(req.params.id); const input = rescheduleInput.parse(req.body);
+  const result = await withTransaction((client) => changeNextPaymentDate(client, loanId, input, req.user?.id));
+  res.json({ data: result });
+}));
+
+operationsRouter.post('/prestamos/:id/incobrable', asyncHandler(async (req, res) => {
+  const loanId = z.string().uuid().parse(req.params.id); const input = badDebtInput.parse(req.body);
+  res.status(201).json({ data: await withTransaction((client) => declareBadDebt(client, loanId, input, req.user?.id)) });
+}));
+
+operationsRouter.post('/prestamos/:id/recuperaciones', asyncHandler(async (req, res) => {
+  const loanId = z.string().uuid().parse(req.params.id); const input = recoveryInput.parse(req.body);
+  res.status(201).json({ data: await withTransaction((client) => registerBadDebtRecovery(client, loanId, input, req.user?.id)) });
+}));
+
+operationsRouter.post('/prestamos/:id/recuperaciones/:recoveryId/revertir', asyncHandler(async (req, res) => {
+  const params = z.object({ id: z.string().uuid(), recoveryId: z.string().uuid() }).parse(req.params); const input = reversalInput.parse(req.body);
+  res.json({ data: await withTransaction((client) => reverseBadDebtRecovery(client, params.id, params.recoveryId, input, req.user?.id)) });
+}));
+
+operationsRouter.post('/prestamos/:id/anular', asyncHandler(async (req, res) => {
+  const loanId = z.string().uuid().parse(req.params.id); const input = badDebtInput.parse(req.body);
+  res.json({ data: await withTransaction((client) => cancelLoan(client, loanId, input, req.user?.id)) });
+}));
+
+operationsRouter.post('/prestamos/:id/pagos/:paymentId/revertir', asyncHandler(async (req, res) => {
+  const params = z.object({ id: z.string().uuid(), paymentId: z.string().uuid() }).parse(req.params); const input = reversalInput.parse(req.body);
+  res.json({ data: await withTransaction((client) => reverseLoanPayment(client, params.id, params.paymentId, input, req.user?.id)) });
+}));
+
+operationsRouter.get('/prestamos/pagos-historicos', asyncHandler(async (_req, res) => {
+  const result = await query(`SELECT h.id,h.cliente_nombre,COALESCE(c.nombre,h.cliente_nombre) AS cliente,h.capital_referencia,h.interes_pagado,h.tasa_catalogo,h.tasa_inferida,h.fecha_pago,s.nombre AS socio,h.responsable_original,h.observaciones FROM pagos_intereses_historicos h LEFT JOIN clientes c ON c.id=h.cliente_id LEFT JOIN socios s ON s.id=h.socio_id ORDER BY h.fecha_pago DESC NULLS LAST,h.created_at DESC`);
+  res.json({ data: result.rows });
+}));
+
+operationsRouter.get('/prestamos/:id', asyncHandler(async (req, res) => {
+  const loanId = z.string().uuid().parse(req.params.id);
+  const result = await withTransaction(async (client) => { await refreshOverdueLoans(client, new Date().toISOString().slice(0, 10)); return getLoanDetail(client, loanId); });
   res.json({ data: result });
 }));
 
 operationsRouter.get('/prestamos', asyncHandler(async (_req, res) => {
-  const rows = await withTransaction(async (client) => { await refreshOverdueLoans(client, new Date().toISOString().slice(0, 10)); return client.query('SELECT * FROM prestamos ORDER BY created_at DESC LIMIT 200'); });
+  const rows = await withTransaction(async (client) => { await refreshOverdueLoans(client, new Date().toISOString().slice(0, 10)); return client.query(`${loanListSql} ORDER BY CASE p.estado WHEN 'VENCIDO' THEN 0 WHEN 'ACTIVO' THEN 1 WHEN 'INCOBRABLE' THEN 2 ELSE 3 END,p.fecha_proximo_pago,p.created_at DESC LIMIT 500`); });
   res.json({ data: rows.rows });
 }));
 

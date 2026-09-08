@@ -37,6 +37,7 @@ psql "$DATABASE_URL" -f ../../database/migrations/001_initial_schema.sql
 psql "$DATABASE_URL" -f ../../database/migrations/002_seed_socios_y_custodias.sql
 psql "$DATABASE_URL" -f ../../database/migrations/003_legacy_migration_support.sql
 psql "$DATABASE_URL" -f ../../database/migrations/004_inventario_general_del_negocio.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f ../../database/migrations/005_complete_loan_management.sql
 npm start
 ```
 
