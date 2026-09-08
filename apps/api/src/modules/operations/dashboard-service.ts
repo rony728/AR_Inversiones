@@ -1,5 +1,6 @@
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
+import { calculateOperatingProfitCents } from './profit-service.js';
 
 export const dashboardPeriodInput = z.object({
   desde: z.string().date(),
@@ -12,7 +13,7 @@ type DashboardRow = {
 };
 
 export function netPeriodProfit(salesProfit: number, interest: number, expenses: number, otherIncome = 0, loanLosses = 0) {
-  return Math.round((salesProfit + interest + otherIncome - expenses - loanLosses) * 100) / 100;
+  return calculateOperatingProfitCents({ ganancia_ventas: String(salesProfit), intereses_cobrados: String(interest), recuperaciones_incobrables: String(otherIncome), gastos: String(expenses), perdidas_prestamo: String(loanLosses) }) / 100;
 }
 
 export async function getDashboard(client: PoolClient, desde: string, hasta: string) {

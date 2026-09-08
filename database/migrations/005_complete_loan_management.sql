@@ -10,7 +10,9 @@ BEGIN;
 ALTER TABLE intereses_prestamo
   ADD COLUMN IF NOT EXISTS cancelado_at timestamptz,
   ADD COLUMN IF NOT EXISTS motivo_cancelacion text,
-  ADD COLUMN IF NOT EXISTS cancelado_por uuid REFERENCES usuarios(id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS cancelado_por uuid REFERENCES usuarios(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS generado_por_pago_id uuid REFERENCES pagos_prestamo(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS cancelado_por_reversion_pago_id uuid REFERENCES pagos_prestamo(id) ON DELETE SET NULL;
 
 ALTER TABLE pagos_prestamo
   ADD COLUMN IF NOT EXISTS revertido_at timestamptz,
@@ -77,6 +79,7 @@ CREATE TABLE IF NOT EXISTS anulaciones_prestamo (
 
 CREATE INDEX IF NOT EXISTS reprogramaciones_prestamo_idx ON reprogramaciones_prestamo (prestamo_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS recuperaciones_incobrables_idx ON recuperaciones_incobrables (prestamo_id, fecha DESC);
+CREATE INDEX IF NOT EXISTS intereses_generados_por_pago_idx ON intereses_prestamo (generado_por_pago_id) WHERE generado_por_pago_id IS NOT NULL;
 
 DROP TRIGGER IF EXISTS prestamos_incobrables_updated_at ON prestamos_incobrables;
 CREATE TRIGGER prestamos_incobrables_updated_at BEFORE UPDATE ON prestamos_incobrables FOR EACH ROW EXECUTE FUNCTION establecer_updated_at();

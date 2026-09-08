@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { AppError } from '../../lib/errors.js';
 import { writeAudit } from '../../lib/audit.js';
 import { money, toCents } from './inventory-service.js';
+import { getAvailableProfit, lockProfitDistributions } from './profit-service.js';
 
 const uuid = z.string().uuid();
 export const expenseInput = z.object({
@@ -59,6 +60,10 @@ export function distributionShareCents(total: number) {
 export async function registerProfitDistribution(client: PoolClient, input: z.infer<typeof distributionInput>, userId?: string) {
   const shareCents = distributionShareCents(input.utilidadTotal);
   const totalCents = shareCents * 3;
+  await lockProfitDistributions(client);
+  const profit = await getAvailableProfit(client, input.fecha);
+  if (profit.availableCents <= 0) throw new AppError(422, 'No hay utilidad disponible para distribuir.', 'NO_AVAILABLE_PROFIT');
+  if (totalCents > profit.availableCents) throw new AppError(422, 'La distribución supera la utilidad disponible.', 'INSUFFICIENT_AVAILABLE_PROFIT');
   const activePartners = await client.query<{ id: string }>('SELECT id FROM socios WHERE activo = true ORDER BY nombre');
   const activeIds = new Set(activePartners.rows.map((partner) => partner.id));
   const beneficiaryIds = input.socios.map((item) => item.socioBeneficiarioId);
@@ -84,8 +89,9 @@ export async function registerProfitDistribution(client: PoolClient, input: z.in
     await client.query(`INSERT INTO movimientos_custodia (custodia_id,tipo,variacion,saldo_anterior,saldo_posterior,referencia_tipo,referencia_id,created_by) VALUES ($1,$2,$3,$4,$5,'DISTRIBUCION_UTILIDAD',$6,$7)`, [movement.custody.id, movement.type, money(-movement.cents), money(prior), money(after), distribution.rows[0].id, userId ?? null]);
     await client.query(`INSERT INTO movimientos_financieros (tipo,fecha,monto,socio_id,referencia_tipo,referencia_id,descripcion) VALUES ('DISTRIBUCION_UTILIDAD',$1,$2,$3,'DISTRIBUCION_UTILIDAD',$4,$5)`, [input.fecha, money(movement.cents), movement.covererId, distribution.rows[0].id, input.observaciones ?? 'Distribución de utilidad']);
   }
-  await writeAudit(client, { usuarioId: userId, entidadTipo: 'distribucion_utilidad', entidadId: distribution.rows[0].id, accion: 'CONFIRMAR', nuevos: { utilidadTotal: money(totalCents), montoPorSocio: money(shareCents) } });
-  return { id: distribution.rows[0].id, utilidadTotal: money(totalCents), montoPorSocio: money(shareCents) };
+  const remainingCents = profit.availableCents - totalCents;
+  await writeAudit(client, { usuarioId: userId, entidadTipo: 'distribucion_utilidad', entidadId: distribution.rows[0].id, accion: 'CONFIRMAR', nuevos: { utilidadDisponibleAntes: money(profit.availableCents), utilidadTotal: money(totalCents), utilidadRestante: money(remainingCents), montoPorSocio: money(shareCents) } });
+  return { id: distribution.rows[0].id, utilidadDisponibleAntes: money(profit.availableCents), utilidadTotal: money(totalCents), utilidadRestante: money(remainingCents), montoPorSocio: money(shareCents) };
 }
 
 function addCoverage(partner: DistributionPartner, custodias: Map<string, Custody>, balances: Map<string, number>, movements: Array<{ custody: Custody; cents: number; beneficiaryId: string; covererId: string; type: 'DISTRIBUCION_UTILIDAD' | 'COBERTURA_DISTRIBUCION' }>, shortage: number) {

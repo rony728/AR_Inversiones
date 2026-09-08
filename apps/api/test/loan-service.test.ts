@@ -36,13 +36,13 @@ test('separa pago exacto de interés, abono a capital y liquidación total', () 
 
 test('genera varios períodos simples con idempotencia SQL y límite seguro', async () => {
   const statements: string[] = [];
-  const client = { query: async (sql: string) => { statements.push(sql); return { rows: [] }; } };
+  const client = { query: async (sql: string) => { statements.push(sql); return { rows: sql.includes('INSERT INTO intereses_prestamo') ? [{ id: `interest-${statements.length}` }] : [] }; } };
   const loan = { id: '00000000-0000-4000-8000-000000000001', socio_id: '00000000-0000-4000-8000-000000000002', custodia_id: '00000000-0000-4000-8000-000000000003', capital_pendiente: '1000.00', tasa_mensual: '10', fecha_proximo_pago: '2026-01-31', calcular_interes_desde: '2026-01-01', estado: 'ACTIVO' as const };
   const result = await accrueLoanInterest(client as never, loan, '2026-04-30');
   assert.equal(result.fecha_proximo_pago, '2026-05-28');
   assert.equal(result.estado, 'VENCIDO');
   assert.equal(statements.filter((sql) => sql.includes('INSERT INTO intereses_prestamo')).length, 4);
-  assert.equal(statements.filter((sql) => sql.includes('INSERT INTO intereses_prestamo')).every((sql) => sql.includes('ON CONFLICT')), true);
+  assert.equal(statements.filter((sql) => sql.includes('fecha_vencimiento=$2 FOR UPDATE')).length, 4);
 });
 
 test('no genera intereses para estados terminales', async () => {
@@ -60,7 +60,8 @@ test('al desembolsar genera el primer interés completo y descuenta solo el fond
     if (sql.startsWith('SELECT id FROM clientes')) return { rows: [{ id: values[0] }] };
     if (sql.startsWith('SELECT id FROM socios')) return { rows: [{ id: values[0] }] };
     if (sql.startsWith('SELECT saldo_actual FROM custodias')) return { rows: [{ saldo_actual: '2000.00' }] };
-    if (sql.startsWith('INSERT INTO prestamos')) return { rows: [{ id: '44444444-4444-4444-8444-444444444444', socio_id: '22222222-2222-4222-8222-222222222222', custodia_id: '33333333-3333-4333-8333-333333333333', capital_original: '1000.00', capital_pendiente: '1000.00', tasa_mensual: '15', fecha_proximo_pago: '2026-10-07', calcular_interes_desde: '2026-09-07', estado: 'ACTIVO' }] };
+    if (sql.startsWith('INSERT INTO prestamos ')) return { rows: [{ id: '44444444-4444-4444-8444-444444444444', socio_id: '22222222-2222-4222-8222-222222222222', custodia_id: '33333333-3333-4333-8333-333333333333', capital_original: '1000.00', capital_pendiente: '1000.00', tasa_mensual: '15', fecha_proximo_pago: '2026-10-07', calcular_interes_desde: '2026-09-07', estado: 'ACTIVO' }] };
+    if (sql.includes('INSERT INTO intereses_prestamo')) return { rows: [{ id: '55555555-5555-4555-8555-555555555555' }] };
     return { rows: [] };
   } };
   const input = loanInput.parse({ clienteId: '11111111-1111-4111-8111-111111111111', socioId: '22222222-2222-4222-8222-222222222222', custodiaId: '33333333-3333-4333-8333-333333333333', capital: 1000, tasaMensual: 15, fechaDesembolso: '2026-09-07', fechaProximoPago: '2026-10-07' });
