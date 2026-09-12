@@ -21,19 +21,19 @@ export async function getDashboard(client: PoolClient, desde: string, hasta: str
     COALESCE((SELECT sum(total) FROM ventas WHERE estado='CONFIRMADO' AND fecha::date BETWEEN $1 AND $2),0) AS ventas_periodo,
     COALESCE((SELECT sum(ganancia_total) FROM ventas WHERE estado='CONFIRMADO' AND fecha::date BETWEEN $1 AND $2),0) AS ganancia_ventas,
     COALESCE((SELECT sum(monto) FROM gastos WHERE estado='CONFIRMADO' AND fecha BETWEEN $1 AND $2),0) AS gastos_periodo,
-    COALESCE((SELECT sum(monto_interes) FROM pagos_prestamo WHERE revertido_at IS NULL AND fecha_pago BETWEEN $1 AND $2),0) AS intereses_cobrados,
-    COALESCE((SELECT sum(monto) FROM recuperaciones_incobrables WHERE revertido_at IS NULL AND fecha BETWEEN $1 AND $2),0) AS recuperaciones_incobrables,
-    COALESCE((SELECT sum(capital_declarado) FROM prestamos_incobrables WHERE fecha_declaracion BETWEEN $1 AND $2),0) AS perdidas_prestamo,
-    COALESCE((SELECT sum(capital_pendiente) FROM prestamos WHERE estado IN ('ACTIVO','VENCIDO')),0) AS capital_prestado_actual,
-    (SELECT count(*)::int FROM prestamos WHERE estado='VENCIDO') AS prestamos_vencidos,
+    COALESCE((SELECT sum(pp.monto_interes) FROM pagos_prestamo pp JOIN prestamos p ON p.id=pp.prestamo_id WHERE p.eliminado_at IS NULL AND pp.revertido_at IS NULL AND pp.fecha_pago BETWEEN $1 AND $2),0) AS intereses_cobrados,
+    COALESCE((SELECT sum(r.monto) FROM recuperaciones_incobrables r JOIN prestamos p ON p.id=r.prestamo_id WHERE p.eliminado_at IS NULL AND r.revertido_at IS NULL AND r.fecha BETWEEN $1 AND $2),0) AS recuperaciones_incobrables,
+    COALESCE((SELECT sum(pi.capital_declarado) FROM prestamos_incobrables pi JOIN prestamos p ON p.id=pi.prestamo_id WHERE p.eliminado_at IS NULL AND pi.fecha_declaracion BETWEEN $1 AND $2),0) AS perdidas_prestamo,
+    COALESCE((SELECT sum(capital_pendiente) FROM prestamos WHERE eliminado_at IS NULL AND estado IN ('ACTIVO','VENCIDO')),0) AS capital_prestado_actual,
+    (SELECT count(*)::int FROM prestamos WHERE eliminado_at IS NULL AND estado='VENCIDO') AS prestamos_vencidos,
     COALESCE((SELECT sum(saldo_actual) FROM custodias),0) AS fondos_totales,
     COALESCE((SELECT sum(existencia*costo_promedio_unitario) FROM inventario),0) AS valor_inventario`, [desde, hasta]);
   const row = summary.rows[0];
   const actividad = await client.query(`SELECT * FROM (
     SELECT id,'VENTA'::text AS tipo,fecha AS fecha,total AS monto,'Venta confirmada'::text AS descripcion FROM ventas WHERE estado='CONFIRMADO'
     UNION ALL SELECT id,'COMPRA',fecha::timestamp,total,'Compra de inventario' FROM compras WHERE estado='CONFIRMADO'
-    UNION ALL SELECT id,'PRESTAMO',COALESCE(fecha_desembolso,created_at::date)::timestamp,capital_original,'Préstamo desembolsado' FROM prestamos WHERE es_heredado=false AND estado<>'ANULADO'
-    UNION ALL SELECT id,'PAGO_PRESTAMO',fecha_pago::timestamp,monto_total,concat('Pago de préstamo · interés L ',monto_interes,' · capital L ',monto_capital) FROM pagos_prestamo WHERE revertido_at IS NULL
+    UNION ALL SELECT id,'PRESTAMO',COALESCE(fecha_desembolso,created_at::date)::timestamp,capital_original,'Préstamo desembolsado' FROM prestamos WHERE eliminado_at IS NULL AND es_heredado=false AND estado<>'ANULADO'
+    UNION ALL SELECT pp.id,'PAGO_PRESTAMO',pp.fecha_pago::timestamp,pp.monto_total,concat('Pago de préstamo · interés L ',pp.monto_interes,' · capital L ',pp.monto_capital) FROM pagos_prestamo pp JOIN prestamos p ON p.id=pp.prestamo_id WHERE p.eliminado_at IS NULL AND pp.revertido_at IS NULL
     UNION ALL SELECT id,'GASTO',fecha::timestamp,monto,concepto FROM gastos WHERE estado='CONFIRMADO'
     UNION ALL SELECT id,'TRANSFERENCIA_FONDOS',fecha,monto,'Transferencia entre fondos del mismo socio' FROM transferencias_custodia
     UNION ALL SELECT id,'DISTRIBUCION_UTILIDAD',fecha::timestamp,utilidad_total,'Distribución de utilidad' FROM distribuciones_utilidades

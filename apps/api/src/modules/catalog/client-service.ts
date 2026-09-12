@@ -40,7 +40,7 @@ export const clientListSql = `
              count(*) FILTER (WHERE estado='ACTIVO') AS prestamos_activos,
              count(*) FILTER (WHERE estado='VENCIDO') AS prestamos_vencidos,
              COALESCE(sum(capital_pendiente) FILTER (WHERE estado IN ('ACTIVO','VENCIDO')),0) AS capital_pendiente
-        FROM prestamos GROUP BY cliente_id
+        FROM prestamos WHERE eliminado_at IS NULL GROUP BY cliente_id
     ) l ON l.cliente_id=c.id
    ORDER BY lower(c.nombre),c.id`;
 

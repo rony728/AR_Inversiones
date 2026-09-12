@@ -9,6 +9,8 @@ psql -v ON_ERROR_STOP=1 -d ar_inversiones -f database/migrations/001_initial_sch
 psql -v ON_ERROR_STOP=1 -d ar_inversiones -f database/migrations/002_seed_socios_y_custodias.sql
 psql -v ON_ERROR_STOP=1 -d ar_inversiones -f database/migrations/003_legacy_migration_support.sql
 psql -v ON_ERROR_STOP=1 -d ar_inversiones -f database/migrations/004_inventario_general_del_negocio.sql
+psql -v ON_ERROR_STOP=1 -d ar_inversiones -f database/migrations/005_complete_loan_management.sql
+psql -v ON_ERROR_STOP=1 -d ar_inversiones -f database/migrations/006_soft_delete_legacy_loans.sql
 psql -v ON_ERROR_STOP=1 -d ar_inversiones -f database/tests/001_integrity_smoke_test.sql
 ```
 

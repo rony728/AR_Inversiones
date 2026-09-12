@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { registerLoanPayment, reverseLoanPayment } from '../src/modules/operations/loan-service.js';
+import { previewLoanPayment, registerLoanPayment, reverseLoanPayment } from '../src/modules/operations/loan-service.js';
 
 type InterestState = { id: string; fecha_vencimiento: string; capital_base: string; monto_interes: string; saldo_pendiente: string; generado_por_pago_id: string | null; cancelado_at: string | null; cancelado_por_reversion_pago_id: string | null };
 type PaymentState = { id: string; monto_total: string; monto_capital: string; fecha_pago: string; estado_prestamo_anterior: 'ACTIVO' | 'VENCIDO'; fecha_proximo_pago_anterior: string; revertido_at: string | null; order: number };
@@ -20,7 +20,7 @@ class LoanMemoryClient {
     if (sql === 'UPDATE intereses_prestamo SET saldo_pendiente=0 WHERE id=$1') { this.interests.find((item) => item.id === values[0])!.saldo_pendiente = '0.00'; return { rows: [] }; }
     if (sql.startsWith('INSERT INTO pagos_intereses_prestamo')) { this.allocations.push({ pago_prestamo_id: String(values[0]), interes_prestamo_id: String(values[1]), monto_aplicado: String(values[2]) }); return { rows: [] }; }
     if (sql.startsWith('UPDATE prestamos SET capital_pendiente=')) { this.loan.capital_pendiente = String(values[0]); this.loan.fecha_proximo_pago = String(values[1]); this.loan.estado = values[2] as typeof this.loan.estado; return { rows: [] }; }
-    if (sql.startsWith('SELECT id,cancelado_at,cancelado_por_reversion_pago_id')) { const found = this.interests.find((item) => item.fecha_vencimiento === values[1]); return { rows: found ? [{ ...found }] : [] }; }
+    if (sql.startsWith('SELECT id,cancelado_at,cancelado_por_reversion_pago_id')) { const found = this.interests.find((item) => item.fecha_vencimiento === values[1] && (item.cancelado_at || Number(item.saldo_pendiente) > 0 || item.generado_por_pago_id === values[2])); return { rows: found ? [{ ...found }] : [] }; }
     if (sql.startsWith('INSERT INTO intereses_prestamo ')) { const interest: InterestState = { id: `interest-${this.interests.length + 1}`, fecha_vencimiento: String(values[1]), capital_base: String(values[2]), monto_interes: String(values[4]), saldo_pendiente: String(values[4]), generado_por_pago_id: values[5] ? String(values[5]) : null, cancelado_at: null, cancelado_por_reversion_pago_id: null }; this.interests.push(interest); return { rows: [{ id: interest.id }] }; }
     if (sql.startsWith('UPDATE intereses_prestamo SET capital_base=')) { const item = this.interests.find((interest) => interest.id === values[4])!; Object.assign(item, { capital_base: String(values[0]), monto_interes: String(values[2]), saldo_pendiente: String(values[2]), generado_por_pago_id: values[3] ? String(values[3]) : null, cancelado_at: null, cancelado_por_reversion_pago_id: null }); return { rows: [] }; }
     if (sql.startsWith('SELECT saldo_actual FROM custodias')) return { rows: [{ saldo_actual: this.custody.toFixed(2) }] };
@@ -51,6 +51,42 @@ test('revertir un pago solo de interés restaura el período original y cancela 
   assert.equal(db.interests[1].cancelado_por_reversion_pago_id, payment.id);
 });
 
+test('vista previa y pago de solo interés avanzan un mes desde la fecha real del pago', async () => {
+  const previewDb = new LoanMemoryClient();
+  const preview = await previewLoanPayment(previewDb as never, previewDb.loan.id, '2026-09-11', 150);
+  assert.equal(preview.proximaFecha, '2026-10-11');
+  assert.equal(preview.estadoResultante, 'ACTIVO');
+  const db = new LoanMemoryClient();
+  const payment = await registerLoanPayment(db as never, db.loan.id, { fechaPago: '2026-09-11', monto: 150 });
+  assert.equal(payment.fechaProximoPago, '2026-10-11');
+  assert.equal(db.loan.fecha_proximo_pago, '2026-10-11');
+  assert.equal(db.loan.capital_pendiente, '1000.00');
+});
+
+test('pago mixto usa la fecha del pago y calcula el nuevo interés sobre capital restante', async () => {
+  const db = new LoanMemoryClient();
+  const payment = await registerLoanPayment(db as never, db.loan.id, { fechaPago: '2026-09-11', monto: 350 });
+  assert.equal(payment.fechaProximoPago, '2026-10-11');
+  assert.equal(db.loan.capital_pendiente, '800.00');
+  assert.equal(db.interests.at(-1)?.monto_interes, '120.00');
+});
+
+test('liquidación total deja el préstamo pagado y no genera otro interés', async () => {
+  const db = new LoanMemoryClient();
+  const payment = await registerLoanPayment(db as never, db.loan.id, { fechaPago: '2026-09-11', monto: 1150 });
+  assert.equal(payment.estado, 'PAGADO');
+  assert.equal(payment.capitalRestante, '0.00');
+  assert.equal(db.interests.length, 1);
+});
+
+test('pago anticipado conserva períodos distintos aunque coincidan en la misma fecha', async () => {
+  const db = new LoanMemoryClient();
+  await registerLoanPayment(db as never, db.loan.id, { fechaPago: '2026-09-01', monto: 150 });
+  assert.equal(db.loan.fecha_proximo_pago, '2026-10-01');
+  assert.equal(db.interests.filter((interest) => interest.fecha_vencimiento === '2026-10-01').length, 2);
+  assert.equal(db.pendingInterest(), 150);
+});
+
 test('revertir un abono restaura capital e interés y cancela el período calculado sobre el capital reducido', async () => {
   const db = new LoanMemoryClient();
   const payment = await registerLoanPayment(db as never, db.loan.id, { fechaPago: '2026-09-15', monto: 350 });
@@ -66,7 +102,7 @@ test('un pago nuevo reactiva el mismo período cancelado con el capital correcto
   const db = new LoanMemoryClient();
   const first = await registerLoanPayment(db as never, db.loan.id, { fechaPago: '2026-09-15', monto: 350 });
   await reverseLoanPayment(db as never, db.loan.id, first.id, { motivo: 'Corrección' });
-  const second = await registerLoanPayment(db as never, db.loan.id, { fechaPago: '2026-09-16', monto: 250 });
+  const second = await registerLoanPayment(db as never, db.loan.id, { fechaPago: '2026-09-15', monto: 250 });
   assert.equal(db.interests.length, 2);
   assert.equal(db.interests[1].generado_por_pago_id, second.id);
   assert.equal(db.interests[1].capital_base, '900.00');

@@ -37,7 +37,7 @@ catalogRouter.get('/clientes/:id', asyncHandler(async (req, res) => {
     if (!clientResult.rows[0]) throw new AppError(404, 'Cliente no encontrado.', 'NOT_FOUND');
     const loansResult = await client.query(
       `SELECT id,fecha_desembolso,capital_original,capital_pendiente,tasa_mensual,fecha_proximo_pago,estado
-         FROM prestamos WHERE cliente_id=$1 ORDER BY fecha_desembolso DESC NULLS LAST,created_at DESC`, [clientId]
+         FROM prestamos WHERE cliente_id=$1 AND eliminado_at IS NULL ORDER BY fecha_desembolso DESC NULLS LAST,created_at DESC`, [clientId]
     );
     const salesResult = await client.query(
       `SELECT id,fecha,total,ganancia_total,estado

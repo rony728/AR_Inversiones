@@ -21,14 +21,16 @@ async function flush() { await act(async () => { await new Promise((resolve) => 
 function setText(element: HTMLTextAreaElement, value: string) { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(element, value); element.dispatchEvent(new Event('input', { bubbles: true })); }
 
 describe('modales de préstamos', () => {
-  let container: HTMLDivElement; let root: ReturnType<typeof createRoot>;
+  let container: HTMLDivElement; let root: ReturnType<typeof createRoot>; let deletedIds: Set<string>;
   beforeEach(async () => {
+    deletedIds = new Set();
     apiMock.mockImplementation(async (path: string, options?: { method?: string }) => {
-      if (path === '/prestamos') return { data: loans };
+      if (path === '/prestamos') return { data: loans.map((loan) => deletedIds.has(loan.id) ? { ...loan, eliminado_at: '2026-09-11T12:00:00Z', estado_antes_eliminacion: loan.estado, motivo_eliminacion: 'Duplicado de migración' } : loan) };
       if (path === '/catalogo/clientes') return { data: [{ id: clientId, nombre: 'Cliente', activo: true }] };
       if (path === '/catalogo/socios') return { data: [{ id: partnerId, nombre: 'Rony', activo: true, custodias: [{ id: fundId, actividad: 'PRESTAMOS', saldo_actual: 5000 }] }] };
       if (/^\/prestamos\/loan-\d$/.test(path) && options?.method === 'PATCH') return { data: loans[Number(path.at(-1)) - 1] };
-      if (/^\/prestamos\/loan-\d$/.test(path)) return { data: detail(Number(path.at(-1)) - 1) };
+      if (/^\/prestamos\/loan-\d\/eliminar$/.test(path) && options?.method === 'POST') { deletedIds.add(path.split('/')[2]); return { data: { id: path.split('/')[2] } }; }
+      if (/^\/prestamos\/loan-\d$/.test(path)) { const value = detail(Number(path.at(-1)) - 1); return { data: deletedIds.has(value.prestamo.id) ? { ...value, prestamo: { ...value.prestamo, eliminado_at: '2026-09-11T12:00:00Z', estado_antes_eliminacion: value.prestamo.estado, motivo_eliminacion: 'Duplicado de migración' } } : value }; }
       throw new Error(`Ruta inesperada: ${path}`);
     });
     vi.stubGlobal('confirm', vi.fn(() => true));
@@ -43,8 +45,14 @@ describe('modales de préstamos', () => {
     await act(async () => { (middleRow.querySelector('button') as HTMLButtonElement).click(); });
     const dialog = document.body.querySelector('[role="dialog"]')!;
     expect(dialog).toBeTruthy(); expect(document.body.style.overflow).toBe('hidden');
+    let save = [...dialog.querySelectorAll('button')].find((button) => button.textContent?.includes('Guardar corrección')) as HTMLButtonElement;
+    expect(dialog.textContent).toContain('Debes indicar un motivo de al menos 3 caracteres para habilitar el guardado.');
+    expect(save.disabled).toBe(true);
+    await act(async () => setText(dialog.querySelector('textarea[required]')!, 'No'));
+    expect(save.disabled).toBe(true);
     await act(async () => setText(dialog.querySelector('textarea[required]')!, 'Corrección verificada'));
-    const save = [...dialog.querySelectorAll('button')].find((button) => button.textContent?.includes('Guardar corrección')) as HTMLButtonElement;
+    save = [...dialog.querySelectorAll('button')].find((button) => button.textContent?.includes('Guardar corrección')) as HTMLButtonElement;
+    expect(dialog.textContent).not.toContain('Debes indicar un motivo de al menos 3 caracteres para habilitar el guardado.');
     expect(save.type).toBe('submit'); expect(save.disabled).toBe(false);
     expect((dialog.querySelector('form') as HTMLFormElement).checkValidity()).toBe(true);
     await act(async () => save.click()); await flush();
@@ -76,5 +84,28 @@ describe('modales de préstamos', () => {
     const viewButtons = [...container.querySelectorAll('button')].filter((button) => button.textContent?.includes('Ver'));
     await act(async () => { (viewButtons[0] as HTMLButtonElement).click(); }); await flush();
     expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Intereses por período');
+  });
+
+  it('retira un heredado y lo conserva consultable sin acciones operativas', async () => {
+    const row = [...container.querySelectorAll('tbody tr')].find((item) => item.textContent?.includes('Intermedio'))!;
+    const view = [...row.querySelectorAll('button')].find((button) => button.textContent?.includes('Ver')) as HTMLButtonElement;
+    await act(async () => view.click()); await flush();
+    let dialog = document.body.querySelector('[role="dialog"]')!;
+    const remove = [...dialog.querySelectorAll('button')].find((button) => button.textContent === 'Eliminar') as HTMLButtonElement;
+    await act(async () => remove.click());
+    dialog = document.body.querySelector('[role="dialog"]')!;
+    await act(async () => setText(dialog.querySelector('.loan-action-form textarea')!, 'Duplicado de migración'));
+    const confirm = [...dialog.querySelectorAll('button')].find((button) => button.textContent?.includes('Confirmar acción')) as HTMLButtonElement;
+    await act(async () => confirm.click());
+    expect(window.confirm).toHaveBeenCalledWith('¿Confirmas que deseas retirar este préstamo de la cartera? El registro se conservará en Eliminados para auditoría.');
+    await vi.waitFor(() => expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('ELIMINADO'));
+    expect(apiMock.mock.calls.some(([path, options]) => path === '/prestamos/loan-2/eliminar' && options?.method === 'POST')).toBe(true);
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Duplicado de migración');
+    expect([...document.body.querySelectorAll('[role="dialog"] button')].some((button) => ['Editar datos', 'Reprogramar', 'Eliminar'].includes(button.textContent ?? ''))).toBe(false);
+    await act(async () => (document.body.querySelector('[role="dialog"] .close-button') as HTMLButtonElement).click());
+    const filter = container.querySelector('.loan-tools select') as HTMLSelectElement;
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(filter, 'ELIMINADO'); filter.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(container.querySelector('tbody')?.textContent).toContain('Intermedio');
+    expect(container.querySelector('tbody')?.textContent).toContain('ELIMINADO');
   });
 });

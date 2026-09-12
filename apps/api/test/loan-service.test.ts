@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { accrueLoanInterest, addMonth, correctInheritedLoan, createLoan, declareBadDebt, inheritedLoanCorrectionInput, loanInput, paymentBreakdown, registerBadDebtRecovery } from '../src/modules/operations/loan-service.js';
+import { accrueLoanInterest, addMonth, correctInheritedLoan, createLoan, declareBadDebt, deleteInheritedLoan, deleteInheritedLoanInput, inheritedLoanCorrectionInput, loanInput, nextPaymentDateAfterPayment, paymentBreakdown, registerBadDebtRecovery } from '../src/modules/operations/loan-service.js';
 import { money, toCents } from '../src/modules/operations/inventory-service.js';
 
 test('calcula el interés mensual simple de L 5,000 al 15%', () => {
@@ -29,6 +29,7 @@ test('valida que la próxima fecha no sea anterior al desembolso', () => {
 test('valida los capitales y fechas de una corrección heredada', () => {
   const base = { clienteId: '11111111-1111-4111-8111-111111111111', socioId: '22222222-2222-4222-8222-222222222222', custodiaId: '33333333-3333-4333-8333-333333333333', capitalOriginal: 1000, capitalPendiente: 800, interesPendiente: 120, tasaMensual: 15, fechaDesembolso: null, fechaProximoPago: '2026-10-07', observaciones: null, motivo: 'Corrección inicial' };
   assert.equal(inheritedLoanCorrectionInput.safeParse(base).success, true);
+  assert.equal(inheritedLoanCorrectionInput.safeParse({ ...base, interesPendiente: 0 }).success, true);
   assert.equal(inheritedLoanCorrectionInput.safeParse({ ...base, capitalPendiente: 1200 }).success, false);
   assert.equal(inheritedLoanCorrectionInput.safeParse({ ...base, fechaDesembolso: '2026-11-01' }).success, false);
 });
@@ -41,6 +42,12 @@ test('separa pago exacto de interés, abono a capital y liquidación total', () 
   assert.throws(() => paymentBreakdown(5000, 750, 5751), (error: unknown) => (error as { code?: string }).code === 'EXCESSIVE_PAYMENT');
 });
 
+test('avanza la próxima fecha un mes desde el pago cuando queda capital', () => {
+  assert.equal(nextPaymentDateAfterPayment('2026-09-11', 2000), '2026-10-11');
+  assert.equal(nextPaymentDateAfterPayment('2026-01-31', 1), '2026-02-28');
+  assert.equal(nextPaymentDateAfterPayment('2026-09-11', 0), null);
+});
+
 test('genera varios períodos simples con idempotencia SQL y límite seguro', async () => {
   const statements: string[] = [];
   const client = { query: async (sql: string) => { statements.push(sql); return { rows: sql.includes('INSERT INTO intereses_prestamo') ? [{ id: `interest-${statements.length}` }] : [] }; } };
@@ -49,7 +56,7 @@ test('genera varios períodos simples con idempotencia SQL y límite seguro', as
   assert.equal(result.fecha_proximo_pago, '2026-05-28');
   assert.equal(result.estado, 'VENCIDO');
   assert.equal(statements.filter((sql) => sql.includes('INSERT INTO intereses_prestamo')).length, 4);
-  assert.equal(statements.filter((sql) => sql.includes('fecha_vencimiento=$2 FOR UPDATE')).length, 4);
+  assert.equal(statements.filter((sql) => sql.includes('fecha_vencimiento=$2')).length, 4);
 });
 
 test('no genera intereses para estados terminales', async () => {
@@ -77,6 +84,20 @@ test('al desembolsar genera el primer interés completo y descuenta solo el fond
   assert.equal(calls.find((call) => call.sql.includes('INSERT INTO intereses_prestamo'))?.values[4], '150.00');
   assert.deepEqual(calls.find((call) => call.sql.startsWith('UPDATE custodias'))?.values, ['1000.00', input.custodiaId]);
 });
+
+for (const [capital, rate, expected] of [[2000, 15, '300.00'], [2500, 15, '375.00'], [1000, 0, '0.00']] as const) {
+  test(`al desembolsar L ${capital} al ${rate}% genera L ${expected} de interés inicial`, async () => {
+    const client = { query: async (sql: string, values: unknown[] = []) => {
+      if (sql.startsWith('SELECT id FROM clientes') || sql.startsWith('SELECT id FROM socios')) return { rows: [{ id: values[0] }] };
+      if (sql.startsWith('SELECT saldo_actual FROM custodias')) return { rows: [{ saldo_actual: '10000.00' }] };
+      if (sql.startsWith('INSERT INTO prestamos ')) return { rows: [{ id: '44444444-4444-4444-8444-444444444444', socio_id: values[1], custodia_id: values[2], capital_original: Number(values[6]).toFixed(2), capital_pendiente: Number(values[6]).toFixed(2), tasa_mensual: String(values[5]), fecha_proximo_pago: values[4], calcular_interes_desde: values[3], estado: 'ACTIVO' }] };
+      if (sql.includes('INSERT INTO intereses_prestamo')) return { rows: [{ id: '55555555-5555-4555-8555-555555555555' }] };
+      return { rows: [] };
+    } };
+    const input = loanInput.parse({ clienteId: '11111111-1111-4111-8111-111111111111', socioId: '22222222-2222-4222-8222-222222222222', custodiaId: '33333333-3333-4333-8333-333333333333', capital, tasaMensual: rate, fechaDesembolso: '2026-09-11' });
+    assert.equal((await createLoan(client as never, input)).interesInicial, expected);
+  });
+}
 
 test('declarar incobrable cancela intereses, registra pérdida y no mueve el fondo', async () => {
   const calls: Array<{ sql: string; values: unknown[] }> = [];
@@ -150,4 +171,33 @@ test('bloquea la corrección cuando el préstamo ya tiene actividad operativa', 
     return { rows: [] };
   } };
   await assert.rejects(correctInheritedLoan(client as never, 'loan-1', inheritedLoanCorrectionInput.parse({ clienteId: '11111111-1111-4111-8111-111111111111', socioId: '22222222-2222-4222-8222-222222222222', custodiaId: '33333333-3333-4333-8333-333333333333', capitalOriginal: 1000, capitalPendiente: 1000, interesPendiente: 150, tasaMensual: 15, fechaDesembolso: null, fechaProximoPago: '2026-10-08', motivo: 'Corrección inicial' })), (error: unknown) => (error as { code?: string }).code === 'LOAN_HAS_OPERATIONAL_HISTORY');
+});
+
+test('elimina lógicamente un préstamo heredado sin mover fondos y audita el estado anterior', async () => {
+  const calls: Array<{ sql: string; values: unknown[] }> = [];
+  const client = { query: async (sql: string, values: unknown[] = []) => {
+    calls.push({ sql, values });
+    if (sql.startsWith('SELECT id,cliente_id,socio_id')) return { rows: [{ id: 'loan-1', cliente_id: 'client-1', socio_id: 'partner-1', custodia_id: 'fund-1', capital_pendiente: '2000.00', tasa_mensual: '15', fecha_proximo_pago: '2026-10-11', es_heredado: true, estado: 'ACTIVO', eliminado_at: null }] };
+    if (sql.startsWith('SELECT EXISTS')) return { rows: [{ has_history: false }] };
+    if (sql.startsWith('UPDATE prestamos SET eliminado_at=')) return { rows: [{ eliminado_at: '2026-09-11T12:00:00.000Z' }] };
+    return { rows: [] };
+  } };
+  const result = await deleteInheritedLoan(client as never, 'loan-1', deleteInheritedLoanInput.parse({ motivo: 'Duplicado de migración' }), 'user-1');
+  assert.equal(result.estadoAnterior, 'ACTIVO');
+  assert.equal(calls.some((call) => call.sql.startsWith('UPDATE custodias') || call.sql.includes('INSERT INTO movimientos_')), false);
+  assert.equal(calls.some((call) => call.values.includes('ELIMINAR_LOGICO')), true);
+});
+
+test('bloquea eliminar un préstamo con operaciones posteriores', async () => {
+  const client = { query: async (sql: string) => {
+    if (sql.startsWith('SELECT id,cliente_id,socio_id')) return { rows: [{ id: 'loan-1', es_heredado: true, estado: 'ACTIVO', eliminado_at: null }] };
+    if (sql.startsWith('SELECT EXISTS')) return { rows: [{ has_history: true }] };
+    return { rows: [] };
+  } };
+  await assert.rejects(deleteInheritedLoan(client as never, 'loan-1', { motivo: 'Duplicado de migración' }, 'user-1'), (error: unknown) => (error as { code?: string }).code === 'LOAN_HAS_OPERATIONAL_HISTORY');
+});
+
+test('bloquea eliminar préstamos creados por la aplicación', async () => {
+  const client = { query: async (sql: string) => sql.startsWith('SELECT id,cliente_id,socio_id') ? { rows: [{ id: 'loan-1', es_heredado: false, estado: 'ACTIVO', eliminado_at: null }] } : { rows: [] } };
+  await assert.rejects(deleteInheritedLoan(client as never, 'loan-1', { motivo: 'No corresponde' }, 'user-1'), (error: unknown) => (error as { code?: string }).code === 'LOAN_DELETE_NOT_ALLOWED');
 });
