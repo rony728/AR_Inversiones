@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - prueba-modales-prestamos
   workflow_dispatch:
 
 permissions:
