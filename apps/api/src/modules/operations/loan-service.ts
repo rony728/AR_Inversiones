@@ -12,8 +12,8 @@ export const rescheduleInput = z.object({ fechaProximoPago: isoDate, motivo: rea
 export const badDebtInput = z.object({ fecha: isoDate, motivo: reason }).strict();
 export const recoveryInput = z.object({ fecha: isoDate, monto: z.coerce.number().positive(), observaciones: z.string().trim().max(2000).optional() }).strict();
 export const reversalInput = z.object({ motivo: reason }).strict();
-export const deleteInheritedLoanInput = z.object({ motivo: reason }).strict();
-export const inheritedLoanCorrectionInput = z.object({
+export const deleteLoanInput = z.object({ motivo: reason }).strict();
+export const loanEditInput = z.object({
   clienteId: uuid,
   socioId: uuid,
   custodiaId: uuid,
@@ -21,7 +21,7 @@ export const inheritedLoanCorrectionInput = z.object({
   fechaProximoPago: isoDate,
   tasaMensual: z.coerce.number().min(0).max(100),
   capitalOriginal: z.coerce.number().positive(),
-  capitalPendiente: z.coerce.number().positive(),
+  capitalPendiente: z.coerce.number().min(0),
   interesPendiente: z.coerce.number().min(0),
   observaciones: z.string().trim().max(2000).nullable().optional(),
   motivo: reason
@@ -47,31 +47,71 @@ export async function createLoan(client: PoolClient, input: LoanInput, userId?: 
 async function lockedLoan(client: PoolClient, loanId: string, allowDeleted = false) { const result = await client.query<Loan>(`SELECT id,cliente_id,socio_id,custodia_id,fecha_desembolso,capital_original,capital_pendiente,tasa_mensual,fecha_proximo_pago,calcular_interes_desde,es_heredado,interes_inicial_heredado,observaciones,estado,eliminado_at,eliminado_por,motivo_eliminacion,estado_antes_eliminacion FROM prestamos WHERE id=$1 FOR UPDATE`, [loanId]); const loan = result.rows[0]; if (!loan) throw new AppError(404, 'Préstamo no encontrado.', 'NOT_FOUND'); if (loan.eliminado_at && !allowDeleted) throw new AppError(422, 'El préstamo fue eliminado de la cartera y solo está disponible para consulta.', 'LOAN_DELETED'); return loan; }
 async function pendingInterests(client: PoolClient, loanId: string) { return (await client.query<Interest>(`SELECT id,fecha_vencimiento,capital_base,monto_interes,saldo_pendiente FROM intereses_prestamo WHERE prestamo_id=$1 AND saldo_pendiente>0 AND cancelado_at IS NULL ORDER BY fecha_vencimiento FOR UPDATE`, [loanId])).rows; }
 
-export async function correctInheritedLoan(client: PoolClient, loanId: string, input: z.infer<typeof inheritedLoanCorrectionInput>, userId?: string) {
+type BadDebtBalance = { id: string; capital_declarado: string; saldo_pendiente: string };
+
+async function currentLoanExposure(client: PoolClient, loan: Loan) {
+  if (['ACTIVO', 'VENCIDO'].includes(loan.estado)) return { cents: toCents(Number(loan.capital_pendiente)), badDebt: null as BadDebtBalance | null };
+  if (['INCOBRABLE', 'RECUPERADO'].includes(loan.estado)) {
+    const result = await client.query<BadDebtBalance>('SELECT id,capital_declarado,saldo_pendiente FROM prestamos_incobrables WHERE prestamo_id=$1 FOR UPDATE', [loan.id]);
+    return { cents: toCents(Number(result.rows[0]?.saldo_pendiente ?? 0)), badDebt: result.rows[0] ?? null };
+  }
+  return { cents: 0, badDebt: null as BadDebtBalance | null };
+}
+
+async function recordLoanFundAdjustment(client: PoolClient, input: { custodyId: string; partnerId: string; variationCents: number; loanId: string; reasonText: string; userId?: string }) {
+  if (!input.variationCents) return null;
+  const before = await lockLoansCustody(client, input.custodyId, input.partnerId);
+  const afterCents = toCents(before) + input.variationCents;
+  if (afterCents < 0) throw new AppError(422, 'El fondo de préstamos no tiene saldo suficiente para completar la edición.', 'INSUFFICIENT_CUSTODY_BALANCE');
+  const after = money(afterCents);
+  const variation = money(input.variationCents);
+  await client.query('UPDATE custodias SET saldo_actual=$1 WHERE id=$2', [after, input.custodyId]);
+  await client.query(`INSERT INTO movimientos_custodia (custodia_id,tipo,variacion,saldo_anterior,saldo_posterior,referencia_tipo,referencia_id,created_by) VALUES ($1,'AJUSTE_PRESTAMO',$2,$3,$4,'AJUSTE_PRESTAMO',$5,$6)`, [input.custodyId, variation, before, after, input.loanId, input.userId ?? null]);
+  await client.query(`INSERT INTO movimientos_financieros (tipo,fecha,monto,socio_id,referencia_tipo,referencia_id,descripcion) VALUES ('AJUSTE_PRESTAMO',CURRENT_DATE,$1,$2,'PRESTAMO',$3,$4)`, [money(Math.abs(input.variationCents)), input.partnerId, input.loanId, input.reasonText]);
+  return { custodiaId: input.custodyId, socioId: input.partnerId, saldoAnterior: money(toCents(before)), saldoPosterior: after, variacion: variation };
+}
+
+function editedLoanState(current: LoanState, pendingCents: number, nextDate: string): LoanState {
+  if (current === 'ANULADO') return current;
+  if (current === 'INCOBRABLE' || current === 'RECUPERADO') return pendingCents > 0 ? 'INCOBRABLE' : 'RECUPERADO';
+  if (pendingCents === 0) return 'PAGADO';
+  return nextDate <= new Date().toISOString().slice(0, 10) ? 'VENCIDO' : 'ACTIVO';
+}
+
+export async function editLoan(client: PoolClient, loanId: string, input: z.infer<typeof loanEditInput>, userId?: string) {
   const loan = await lockedLoan(client, loanId);
-  if (!loan.es_heredado || !['ACTIVO', 'VENCIDO'].includes(loan.estado)) throw new AppError(422, 'Solo pueden corregirse préstamos heredados activos o vencidos.', 'LOAN_CORRECTION_NOT_ALLOWED');
-  const history = await client.query<{ has_history: boolean }>(`SELECT EXISTS (
-    SELECT 1 FROM pagos_prestamo WHERE prestamo_id=$1
-    UNION ALL SELECT 1 FROM reprogramaciones_prestamo WHERE prestamo_id=$1
-    UNION ALL SELECT 1 FROM prestamos_incobrables WHERE prestamo_id=$1
-    UNION ALL SELECT 1 FROM anulaciones_prestamo WHERE prestamo_id=$1
-  ) AS has_history`, [loanId]);
-  if (history.rows[0]?.has_history) throw new AppError(422, 'El préstamo ya tiene actividad operativa y no puede reescribirse. Usa las acciones controladas de su historial.', 'LOAN_HAS_OPERATIONAL_HISTORY');
-
-  await requireActiveClient(client, input.clienteId);
-  await requireActivePartner(client, input.socioId);
-  await lockLoansCustody(client, input.custodiaId, input.socioId);
-
+  if (loan.cliente_id !== input.clienteId) await requireActiveClient(client, input.clienteId);
+  if (loan.socio_id !== input.socioId) await requireActivePartner(client, input.socioId);
+  const exposure = await currentLoanExposure(client, loan);
   const previousInterests = await client.query<Interest>('SELECT id,fecha_vencimiento,capital_base,monto_interes,saldo_pendiente FROM intereses_prestamo WHERE prestamo_id=$1 ORDER BY fecha_vencimiento FOR UPDATE', [loanId]);
   const capitalOriginal = money(toCents(input.capitalOriginal));
   const capitalPending = money(toCents(input.capitalPendiente));
   const pendingInterest = money(toCents(input.interesPendiente));
-  const state: LoanState = input.fechaProximoPago <= new Date().toISOString().slice(0, 10) ? 'VENCIDO' : 'ACTIVO';
+  const pendingCents = toCents(input.capitalPendiente);
+  const state = editedLoanState(loan.estado, pendingCents, input.fechaProximoPago);
+  if (!['ACTIVO', 'VENCIDO'].includes(state) && toCents(input.interesPendiente) > 0) throw new AppError(422, 'Los préstamos en estado terminal deben conservar interés pendiente igual a cero.', 'INTEREST_NOT_APPLICABLE');
 
-  await client.query('DELETE FROM intereses_prestamo WHERE prestamo_id=$1', [loanId]);
-  if (toCents(input.interesPendiente) > 0) {
+  const desiredExposure = ['ACTIVO', 'VENCIDO', 'INCOBRABLE'].includes(state) ? pendingCents : 0;
+  const fundAdjustments = [];
+  if (loan.custodia_id === input.custodiaId && loan.socio_id === input.socioId) {
+    const movement = await recordLoanFundAdjustment(client, { custodyId: loan.custodia_id, partnerId: loan.socio_id, variationCents: exposure.cents - desiredExposure, loanId, reasonText: `Edición de préstamo: ${input.motivo}`, userId });
+    if (movement) fundAdjustments.push(movement);
+  } else {
+    const returned = await recordLoanFundAdjustment(client, { custodyId: loan.custodia_id, partnerId: loan.socio_id, variationCents: exposure.cents, loanId, reasonText: `Edición de préstamo: devolución al fondo anterior. ${input.motivo}`, userId });
+    if (returned) fundAdjustments.push(returned);
+    const assigned = await recordLoanFundAdjustment(client, { custodyId: input.custodiaId, partnerId: input.socioId, variationCents: -desiredExposure, loanId, reasonText: `Edición de préstamo: asignación al fondo nuevo. ${input.motivo}`, userId });
+    if (assigned) fundAdjustments.push(assigned);
+    if (!desiredExposure) await lockLoansCustody(client, input.custodiaId, input.socioId);
+  }
+
+  await client.query(`UPDATE intereses_prestamo SET saldo_pendiente=0,cancelado_at=now(),motivo_cancelacion=$2,cancelado_por=$3 WHERE prestamo_id=$1 AND saldo_pendiente>0 AND cancelado_at IS NULL`, [loanId, `Edición: ${input.motivo}`, userId ?? null]);
+  if (toCents(input.interesPendiente) > 0 && ['ACTIVO', 'VENCIDO'].includes(state)) {
     await client.query(`INSERT INTO intereses_prestamo (prestamo_id,fecha_vencimiento,capital_base,tasa_mensual,monto_interes,saldo_pendiente)
       VALUES ($1,$2,$3,$4,$5,$5)`, [loanId, input.fechaProximoPago, capitalPending, input.tasaMensual, pendingInterest]);
+  }
+  if (exposure.badDebt) {
+    const recoveredCents = Math.max(0, toCents(Number(exposure.badDebt.capital_declarado)) - exposure.cents);
+    await client.query('UPDATE prestamos_incobrables SET capital_declarado=$1,saldo_pendiente=$2 WHERE id=$3', [money(recoveredCents + desiredExposure), money(desiredExposure), exposure.badDebt.id]);
   }
   const updated = await client.query<Loan>(`UPDATE prestamos SET cliente_id=$1,socio_id=$2,custodia_id=$3,fecha_desembolso=$4,
     fecha_proximo_pago=$5,tasa_mensual=$6,capital_original=$7,capital_pendiente=$8,estado=$9,observaciones=$10,
@@ -81,31 +121,22 @@ export async function correctInheritedLoan(client: PoolClient, loanId: string, i
     usuarioId: userId,
     entidadTipo: 'prestamo',
     entidadId: loanId,
-    accion: 'CORREGIR_DATOS_HEREDADOS',
+    accion: 'EDITAR',
     anteriores: { ...loan, intereses: previousInterests.rows },
-    nuevos: { ...updated.rows[0], interesPendiente: pendingInterest, motivo: input.motivo }
+    nuevos: { ...updated.rows[0], interesPendiente: pendingInterest, ajustesFondos: fundAdjustments, motivo: input.motivo }
   });
-  return { id: loanId, estado: state, capitalPendiente: capitalPending, interesPendiente: pendingInterest, fechaProximoPago: input.fechaProximoPago };
+  return { id: loanId, estado: state, capitalPendiente: capitalPending, interesPendiente: pendingInterest, fechaProximoPago: input.fechaProximoPago, ajustesFondos: fundAdjustments };
 }
 
-export async function deleteInheritedLoan(client: PoolClient, loanId: string, input: z.infer<typeof deleteInheritedLoanInput>, userId?: string) {
+export async function deleteLoan(client: PoolClient, loanId: string, input: z.infer<typeof deleteLoanInput>, userId?: string) {
   if (!userId) throw new AppError(401, 'Se requiere un usuario autenticado para eliminar el préstamo.', 'UNAUTHORIZED');
   const loan = await lockedLoan(client, loanId, true);
   if (loan.eliminado_at) throw new AppError(422, 'El préstamo ya fue eliminado de la cartera.', 'LOAN_ALREADY_DELETED');
-  if (!loan.es_heredado) throw new AppError(422, 'Solo pueden eliminarse préstamos heredados de la migración.', 'LOAN_DELETE_NOT_ALLOWED');
-  const history = await client.query<{ has_history: boolean }>(`SELECT EXISTS (
-    SELECT 1 FROM pagos_prestamo WHERE prestamo_id=$1
-    UNION ALL SELECT 1 FROM reprogramaciones_prestamo WHERE prestamo_id=$1
-    UNION ALL SELECT 1 FROM prestamos_incobrables WHERE prestamo_id=$1
-    UNION ALL SELECT 1 FROM recuperaciones_incobrables WHERE prestamo_id=$1
-    UNION ALL SELECT 1 FROM anulaciones_prestamo WHERE prestamo_id=$1
-    UNION ALL SELECT 1 FROM movimientos_custodia WHERE referencia_tipo='PRESTAMO' AND referencia_id=$1
-    UNION ALL SELECT 1 FROM movimientos_financieros WHERE referencia_tipo='PRESTAMO' AND referencia_id=$1
-  ) AS has_history`, [loanId]);
-  if (history.rows[0]?.has_history) throw new AppError(422, 'El préstamo tiene operaciones o movimientos financieros asociados y no puede eliminarse.', 'LOAN_HAS_OPERATIONAL_HISTORY');
+  const exposure = await currentLoanExposure(client, loan);
+  const fundAdjustment = await recordLoanFundAdjustment(client, { custodyId: loan.custodia_id, partnerId: loan.socio_id, variationCents: exposure.cents, loanId, reasonText: `Eliminación lógica de préstamo: ${input.motivo}`, userId });
   const result = await client.query<Loan>(`UPDATE prestamos SET eliminado_at=now(),eliminado_por=$1,motivo_eliminacion=$2,estado_antes_eliminacion=estado,updated_at=now() WHERE id=$3 RETURNING *`, [userId, input.motivo, loanId]);
-  await writeAudit(client, { usuarioId: userId, entidadTipo: 'prestamo', entidadId: loanId, accion: 'ELIMINAR_LOGICO', anteriores: loan, nuevos: { eliminadoAt: result.rows[0].eliminado_at, eliminadoPor: userId, motivo: input.motivo, estadoAnterior: loan.estado, clienteId: loan.cliente_id } });
-  return { id: loanId, eliminadoAt: result.rows[0].eliminado_at, eliminadoPor: userId, motivo: input.motivo, estadoAnterior: loan.estado };
+  await writeAudit(client, { usuarioId: userId, entidadTipo: 'prestamo', entidadId: loanId, accion: 'ELIMINAR_LOGICO', anteriores: loan, nuevos: { eliminadoAt: result.rows[0].eliminado_at, eliminadoPor: userId, motivo: input.motivo, estadoAnterior: loan.estado, clienteId: loan.cliente_id, capitalDevuelto: money(exposure.cents), ajusteFondo: fundAdjustment } });
+  return { id: loanId, eliminadoAt: result.rows[0].eliminado_at, eliminadoPor: userId, motivo: input.motivo, estadoAnterior: loan.estado, capitalDevuelto: money(exposure.cents), saldoFondo: fundAdjustment?.saldoPosterior ?? null };
 }
 export function paymentBreakdown(capital: number, interests: number, payment: number) { const capitalCents = toCents(capital); const interestCents = toCents(interests); const paymentCents = toCents(payment); if (paymentCents < interestCents) throw new AppError(422, 'El pago debe cubrir por completo el interés pendiente.', 'INSUFFICIENT_INTEREST_PAYMENT'); if (paymentCents > interestCents + capitalCents) throw new AppError(422, 'El pago excede el total adeudado.', 'EXCESSIVE_PAYMENT'); const paidCapital = paymentCents - interestCents; return { interes: money(interestCents), capital: money(paidCapital), capitalRestante: money(capitalCents - paidCapital), totalAdeudado: money(interestCents + capitalCents) }; }
 export function nextPaymentDateAfterPayment(paymentDate: string, remainingCapital: number) { return remainingCapital > 0 ? addMonth(paymentDate) : null; }
@@ -154,5 +185,5 @@ export async function reverseLoanPayment(client: PoolClient, loanId: string, pay
   return { id: paymentId, prestamoId: loanId, capitalPendiente: restoredCapital, estado: restoredState, fechaProximoPago: restoredDate, saldoFondo: custodyAfter, interesesRestaurados: allocations.rows, interesesFuturosCancelados: futureInterests.rows };
 }
 
-export const loanListSql = `SELECT p.*,c.nombre AS cliente,c.activo AS cliente_activo,s.nombre AS socio,cu.actividad AS fondo_actividad,cu.saldo_actual AS fondo_saldo,ue.nombre AS eliminado_por_nombre,COALESCE(i.intereses_pendientes,0)::numeric AS intereses_pendientes,COALESCE(i.periodos_pendientes,0)::integer AS periodos_pendientes,(CASE WHEN p.estado IN ('INCOBRABLE','RECUPERADO') THEN COALESCE(b.saldo_pendiente,0) ELSE p.capital_pendiente+COALESCE(i.intereses_pendientes,0) END)::numeric AS total_adeudado,b.capital_declarado AS capital_incobrable,b.saldo_pendiente AS saldo_incobrable,b.fecha_declaracion AS fecha_incobrable,b.motivo AS motivo_incobrable,(p.eliminado_at IS NULL AND p.es_heredado AND p.estado IN ('ACTIVO','VENCIDO') AND NOT EXISTS (SELECT 1 FROM pagos_prestamo pp WHERE pp.prestamo_id=p.id) AND NOT EXISTS (SELECT 1 FROM reprogramaciones_prestamo rp WHERE rp.prestamo_id=p.id) AND NOT EXISTS (SELECT 1 FROM prestamos_incobrables pi WHERE pi.prestamo_id=p.id) AND NOT EXISTS (SELECT 1 FROM anulaciones_prestamo ap WHERE ap.prestamo_id=p.id)) AS correccion_habilitada FROM prestamos p JOIN clientes c ON c.id=p.cliente_id JOIN socios s ON s.id=p.socio_id JOIN custodias cu ON cu.id=p.custodia_id LEFT JOIN usuarios ue ON ue.id=p.eliminado_por LEFT JOIN (SELECT prestamo_id,sum(saldo_pendiente) AS intereses_pendientes,count(*) FILTER (WHERE saldo_pendiente>0) AS periodos_pendientes FROM intereses_prestamo WHERE cancelado_at IS NULL GROUP BY prestamo_id)i ON i.prestamo_id=p.id LEFT JOIN prestamos_incobrables b ON b.prestamo_id=p.id`;
-export async function getLoanDetail(client: PoolClient, loanId: string) { const loan = await client.query(`${loanListSql} WHERE p.id=$1`, [loanId]); if (!loan.rows[0]) throw new AppError(404, 'Préstamo no encontrado.', 'NOT_FOUND'); const [interests, payments, schedules, recoveries, cancellation, audit] = await Promise.all([client.query('SELECT * FROM intereses_prestamo WHERE prestamo_id=$1 ORDER BY fecha_vencimiento', [loanId]), client.query(`SELECT pp.*,COALESCE(json_agg(json_build_object('interesId',pip.interes_prestamo_id,'monto',pip.monto_aplicado)) FILTER (WHERE pip.interes_prestamo_id IS NOT NULL),'[]') AS intereses_aplicados FROM pagos_prestamo pp LEFT JOIN pagos_intereses_prestamo pip ON pip.pago_prestamo_id=pp.id WHERE pp.prestamo_id=$1 GROUP BY pp.id ORDER BY pp.fecha_pago DESC,pp.created_at DESC`, [loanId]), client.query('SELECT * FROM reprogramaciones_prestamo WHERE prestamo_id=$1 ORDER BY created_at DESC', [loanId]), client.query('SELECT * FROM recuperaciones_incobrables WHERE prestamo_id=$1 ORDER BY fecha DESC,created_at DESC', [loanId]), client.query('SELECT * FROM anulaciones_prestamo WHERE prestamo_id=$1', [loanId]), client.query(`SELECT * FROM auditoria_sistema WHERE entidad_tipo='prestamo' AND entidad_id=$1 OR (entidad_tipo IN ('pago_prestamo','recuperacion_incobrable') AND datos_nuevos->>'prestamoId'=$1::text) ORDER BY created_at DESC`, [loanId])]); return { prestamo: loan.rows[0], intereses: interests.rows, pagos: payments.rows, reprogramaciones: schedules.rows, recuperaciones: recoveries.rows, anulacion: cancellation.rows[0] ?? null, auditoria: audit.rows }; }
+export const loanListSql = `SELECT p.*,c.nombre AS cliente,c.activo AS cliente_activo,s.nombre AS socio,cu.actividad AS fondo_actividad,cu.saldo_actual AS fondo_saldo,ue.nombre AS eliminado_por_nombre,COALESCE(i.intereses_pendientes,0)::numeric AS intereses_pendientes,COALESCE(i.periodos_pendientes,0)::integer AS periodos_pendientes,(CASE WHEN p.estado IN ('INCOBRABLE','RECUPERADO') THEN COALESCE(b.saldo_pendiente,0) ELSE p.capital_pendiente+COALESCE(i.intereses_pendientes,0) END)::numeric AS total_adeudado,b.capital_declarado AS capital_incobrable,b.saldo_pendiente AS saldo_incobrable,b.fecha_declaracion AS fecha_incobrable,b.motivo AS motivo_incobrable,(p.eliminado_at IS NULL) AS edicion_habilitada FROM prestamos p JOIN clientes c ON c.id=p.cliente_id JOIN socios s ON s.id=p.socio_id JOIN custodias cu ON cu.id=p.custodia_id LEFT JOIN usuarios ue ON ue.id=p.eliminado_por LEFT JOIN (SELECT prestamo_id,sum(saldo_pendiente) AS intereses_pendientes,count(*) FILTER (WHERE saldo_pendiente>0) AS periodos_pendientes FROM intereses_prestamo WHERE cancelado_at IS NULL GROUP BY prestamo_id)i ON i.prestamo_id=p.id LEFT JOIN prestamos_incobrables b ON b.prestamo_id=p.id`;
+export async function getLoanDetail(client: PoolClient, loanId: string) { const loan = await client.query(`${loanListSql} WHERE p.id=$1`, [loanId]); if (!loan.rows[0]) throw new AppError(404, 'Préstamo no encontrado.', 'NOT_FOUND'); const [interests, payments, schedules, recoveries, cancellation, audit] = await Promise.all([client.query('SELECT * FROM intereses_prestamo WHERE prestamo_id=$1 ORDER BY fecha_vencimiento', [loanId]), client.query(`SELECT pp.*,COALESCE(json_agg(json_build_object('interesId',pip.interes_prestamo_id,'monto',pip.monto_aplicado)) FILTER (WHERE pip.interes_prestamo_id IS NOT NULL),'[]') AS intereses_aplicados FROM pagos_prestamo pp LEFT JOIN pagos_intereses_prestamo pip ON pip.pago_prestamo_id=pp.id WHERE pp.prestamo_id=$1 GROUP BY pp.id ORDER BY pp.fecha_pago DESC,pp.created_at DESC`, [loanId]), client.query('SELECT * FROM reprogramaciones_prestamo WHERE prestamo_id=$1 ORDER BY created_at DESC', [loanId]), client.query('SELECT * FROM recuperaciones_incobrables WHERE prestamo_id=$1 ORDER BY fecha DESC,created_at DESC', [loanId]), client.query('SELECT * FROM anulaciones_prestamo WHERE prestamo_id=$1', [loanId]), client.query(`SELECT a.*,u.nombre AS usuario_nombre FROM auditoria_sistema a LEFT JOIN usuarios u ON u.id=a.usuario_id WHERE (a.entidad_tipo='prestamo' AND a.entidad_id=$1) OR (a.entidad_tipo IN ('pago_prestamo','recuperacion_incobrable') AND a.datos_nuevos->>'prestamoId'=$1::text) ORDER BY a.created_at DESC`, [loanId])]); return { prestamo: loan.rows[0], intereses: interests.rows, pagos: payments.rows, reprogramaciones: schedules.rows, recuperaciones: recoveries.rows, anulacion: cancellation.rows[0] ?? null, auditoria: audit.rows }; }

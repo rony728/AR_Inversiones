@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { accrueLoanInterest, addMonth, correctInheritedLoan, createLoan, declareBadDebt, deleteInheritedLoan, deleteInheritedLoanInput, inheritedLoanCorrectionInput, loanInput, nextPaymentDateAfterPayment, paymentBreakdown, registerBadDebtRecovery } from '../src/modules/operations/loan-service.js';
+import { accrueLoanInterest, addMonth, createLoan, declareBadDebt, deleteLoan, deleteLoanInput, editLoan, loanEditInput, loanInput, nextPaymentDateAfterPayment, paymentBreakdown, registerBadDebtRecovery } from '../src/modules/operations/loan-service.js';
 import { money, toCents } from '../src/modules/operations/inventory-service.js';
 
 test('calcula el interés mensual simple de L 5,000 al 15%', () => {
@@ -26,12 +26,13 @@ test('valida que la próxima fecha no sea anterior al desembolso', () => {
   assert.equal(loanInput.safeParse({ ...base, fechaProximoPago: '2026-10-07' }).success, true);
 });
 
-test('valida los capitales y fechas de una corrección heredada', () => {
+test('valida los capitales, fechas y motivo de una edición', () => {
   const base = { clienteId: '11111111-1111-4111-8111-111111111111', socioId: '22222222-2222-4222-8222-222222222222', custodiaId: '33333333-3333-4333-8333-333333333333', capitalOriginal: 1000, capitalPendiente: 800, interesPendiente: 120, tasaMensual: 15, fechaDesembolso: null, fechaProximoPago: '2026-10-07', observaciones: null, motivo: 'Corrección inicial' };
-  assert.equal(inheritedLoanCorrectionInput.safeParse(base).success, true);
-  assert.equal(inheritedLoanCorrectionInput.safeParse({ ...base, interesPendiente: 0 }).success, true);
-  assert.equal(inheritedLoanCorrectionInput.safeParse({ ...base, capitalPendiente: 1200 }).success, false);
-  assert.equal(inheritedLoanCorrectionInput.safeParse({ ...base, fechaDesembolso: '2026-11-01' }).success, false);
+  assert.equal(loanEditInput.safeParse(base).success, true);
+  assert.equal(loanEditInput.safeParse({ ...base, interesPendiente: 0, capitalPendiente: 0 }).success, true);
+  assert.equal(loanEditInput.safeParse({ ...base, capitalPendiente: 1200 }).success, false);
+  assert.equal(loanEditInput.safeParse({ ...base, fechaDesembolso: '2026-11-01' }).success, false);
+  assert.equal(loanEditInput.safeParse({ ...base, motivo: 'No' }).success, false);
 });
 
 test('separa pago exacto de interés, abono a capital y liquidación total', () => {
@@ -141,63 +142,87 @@ test('un préstamo heredado no acumula intereses anteriores a la fecha de migrac
   assert.equal(result.fecha_proximo_pago, '2026-09-24');
 });
 
-test('corrige un préstamo heredado sin alterar saldos ni movimientos de custodia', async () => {
+type FlexibleLoan = { id: string; cliente_id: string; socio_id: string; custodia_id: string; capital_original: string; capital_pendiente: string; tasa_mensual: string; fecha_desembolso: string | null; fecha_proximo_pago: string; estado: 'ACTIVO' | 'VENCIDO' | 'PAGADO' | 'ANULADO' | 'INCOBRABLE' | 'RECUPERADO'; es_heredado: boolean; eliminado_at: string | null; observaciones: string | null };
+const flexibleFundA = '33333333-3333-4333-8333-333333333333';
+const flexibleFundB = '44444444-4444-4444-8444-444444444444';
+const flexiblePartnerB = '55555555-5555-4555-8555-555555555555';
+
+function flexibleLoanClient(changes: Partial<FlexibleLoan> = {}, balances: Record<string, number> = { [flexibleFundA]: 5000, [flexibleFundB]: 5000 }) {
+  const loan: FlexibleLoan = { id: 'loan-1', cliente_id: 'client-1', socio_id: '22222222-2222-4222-8222-222222222222', custodia_id: flexibleFundA, capital_original: '1000.00', capital_pendiente: '1000.00', tasa_mensual: '15', fecha_desembolso: '2026-09-11', fecha_proximo_pago: '2026-10-11', estado: 'ACTIVO', es_heredado: false, eliminado_at: null, observaciones: null, ...changes };
   const calls: Array<{ sql: string; values: unknown[] }> = [];
   const client = { query: async (sql: string, values: unknown[] = []) => {
     calls.push({ sql, values });
-    if (sql.startsWith('SELECT id,cliente_id,socio_id')) return { rows: [{ id: 'loan-1', cliente_id: 'client-old', socio_id: 'partner-old', custodia_id: 'fund-old', fecha_desembolso: null, capital_original: '2000.00', capital_pendiente: '2000.00', tasa_mensual: '15', fecha_proximo_pago: '2024-05-24', calcular_interes_desde: '2026-09-08', es_heredado: true, interes_inicial_heredado: '0.00', observaciones: 'Migrado', estado: 'ACTIVO' }] };
-    if (sql.startsWith('SELECT EXISTS')) return { rows: [{ has_history: false }] };
-    if (sql.startsWith('SELECT id FROM clientes')) return { rows: [{ id: values[0] }] };
-    if (sql.startsWith('SELECT id FROM socios')) return { rows: [{ id: values[0] }] };
-    if (sql.startsWith('SELECT saldo_actual FROM custodias')) return { rows: [{ saldo_actual: '5000.00' }] };
-    if (sql.startsWith('SELECT id,fecha_vencimiento,capital_base')) return { rows: [{ id: 'interest-old', fecha_vencimiento: '2024-05-24', capital_base: '2000.00', monto_interes: '300.00', saldo_pendiente: '300.00' }] };
-    if (sql.startsWith('UPDATE prestamos SET cliente_id=')) return { rows: [{ id: 'loan-1', cliente_id: values[0], socio_id: values[1], custodia_id: values[2], capital_original: values[6], capital_pendiente: values[7], fecha_proximo_pago: values[4], estado: values[8] }] };
+    if (sql.startsWith('SELECT id,cliente_id,socio_id')) return { rows: [{ ...loan }] };
+    if (sql.startsWith('SELECT id FROM clientes') || sql.startsWith('SELECT id FROM socios')) return { rows: [{ id: values[0] }] };
+    if (sql.startsWith('SELECT id,capital_declarado,saldo_pendiente')) return { rows: [{ id: 'bad-1', capital_declarado: '1000.00', saldo_pendiente: '700.00' }] };
+    if (sql.startsWith('SELECT id,fecha_vencimiento,capital_base')) return { rows: [{ id: 'interest-old', fecha_vencimiento: loan.fecha_proximo_pago, capital_base: loan.capital_pendiente, monto_interes: '150.00', saldo_pendiente: '150.00' }] };
+    if (sql.startsWith('SELECT saldo_actual FROM custodias')) return { rows: [{ saldo_actual: (balances[String(values[0])] ?? 0).toFixed(2) }] };
+    if (sql.startsWith('UPDATE custodias SET saldo_actual=')) { balances[String(values[1])] = Number(values[0]); return { rows: [] }; }
+    if (sql.startsWith('UPDATE prestamos SET cliente_id=')) { Object.assign(loan, { cliente_id: values[0], socio_id: values[1], custodia_id: values[2], fecha_desembolso: values[3], fecha_proximo_pago: values[4], tasa_mensual: values[5], capital_original: values[6], capital_pendiente: values[7], estado: values[8], observaciones: values[9] }); return { rows: [{ ...loan }] }; }
+    if (sql.startsWith('UPDATE prestamos SET eliminado_at=')) { loan.eliminado_at = '2026-09-11T12:00:00.000Z'; return { rows: [{ ...loan }] }; }
     return { rows: [] };
   } };
-  const result = await correctInheritedLoan(client as never, 'loan-1', inheritedLoanCorrectionInput.parse({ clienteId: '11111111-1111-4111-8111-111111111111', socioId: '22222222-2222-4222-8222-222222222222', custodiaId: '33333333-3333-4333-8333-333333333333', capitalOriginal: 2500, capitalPendiente: 1800, interesPendiente: 270, tasaMensual: 15, fechaDesembolso: null, fechaProximoPago: '2026-10-08', observaciones: 'Saldo confirmado', motivo: 'Conciliación de apertura' }));
-  assert.equal(result.capitalPendiente, '1800.00');
-  assert.equal(result.interesPendiente, '270.00');
-  assert.equal(calls.filter((call) => call.sql.startsWith('DELETE FROM intereses_prestamo')).length, 1);
-  assert.equal(calls.filter((call) => call.sql.includes('INSERT INTO intereses_prestamo')).length, 1);
-  assert.equal(calls.some((call) => call.sql.startsWith('UPDATE custodias')), false);
-  assert.equal(calls.some((call) => call.sql.includes('INSERT INTO movimientos_custodia')), false);
-  assert.equal(calls.some((call) => call.values.includes('CORREGIR_DATOS_HEREDADOS')), true);
+  return { client, loan, calls, balances };
+}
+
+const editPayload = (changes: Partial<ReturnType<typeof loanEditInput.parse>> = {}) => loanEditInput.parse({ clienteId: '11111111-1111-4111-8111-111111111111', socioId: '22222222-2222-4222-8222-222222222222', custodiaId: '33333333-3333-4333-8333-333333333333', capitalOriginal: 1000, capitalPendiente: 800, interesPendiente: 120, tasaMensual: 15, fechaDesembolso: '2026-09-11', fechaProximoPago: '2026-10-11', observaciones: 'Actualizado', motivo: 'Ajuste confirmado', ...changes });
+
+for (const inherited of [false, true]) test(`edita un préstamo ${inherited ? 'heredado' : 'nuevo'} y conserva el historial de intereses`, async () => {
+  const db = flexibleLoanClient({ es_heredado: inherited }, { [flexibleFundA]: 5000 });
+  const result = await editLoan(db.client as never, 'loan-1', editPayload(), 'user-1');
+  assert.equal(result.capitalPendiente, '800.00');
+  assert.equal(db.balances[flexibleFundA], 5200);
+  assert.equal(db.calls.some((call) => call.sql.startsWith('SELECT EXISTS')), false);
+  assert.equal(db.calls.some((call) => call.sql.startsWith('DELETE FROM intereses_prestamo')), false);
+  assert.equal(db.calls.some((call) => call.sql.startsWith('UPDATE intereses_prestamo SET saldo_pendiente=0,cancelado_at=now()')), true);
+  assert.equal(db.calls.some((call) => call.values.includes('EDITAR')), true);
 });
 
-test('bloquea la corrección cuando el préstamo ya tiene actividad operativa', async () => {
-  const client = { query: async (sql: string) => {
-    if (sql.startsWith('SELECT id,cliente_id,socio_id')) return { rows: [{ id: 'loan-1', es_heredado: true, estado: 'ACTIVO' }] };
-    if (sql.startsWith('SELECT EXISTS')) return { rows: [{ has_history: true }] };
-    return { rows: [] };
-  } };
-  await assert.rejects(correctInheritedLoan(client as never, 'loan-1', inheritedLoanCorrectionInput.parse({ clienteId: '11111111-1111-4111-8111-111111111111', socioId: '22222222-2222-4222-8222-222222222222', custodiaId: '33333333-3333-4333-8333-333333333333', capitalOriginal: 1000, capitalPendiente: 1000, interesPendiente: 150, tasaMensual: 15, fechaDesembolso: null, fechaProximoPago: '2026-10-08', motivo: 'Corrección inicial' })), (error: unknown) => (error as { code?: string }).code === 'LOAN_HAS_OPERATIONAL_HISTORY');
+test('edita un préstamo con pagos y aumenta capital solo si el fondo alcanza', async () => {
+  const db = flexibleLoanClient({ capital_original: '1200.00', capital_pendiente: '800.00' }, { [flexibleFundA]: 500 });
+  await editLoan(db.client as never, 'loan-1', editPayload({ capitalOriginal: 1200, capitalPendiente: 1000, interesPendiente: 150 }), 'user-1');
+  assert.equal(db.balances[flexibleFundA], 300);
+  const insufficient = flexibleLoanClient({ capital_pendiente: '800.00' }, { [flexibleFundA]: 100 });
+  await assert.rejects(editLoan(insufficient.client as never, 'loan-1', editPayload({ capitalOriginal: 1200, capitalPendiente: 1000 }), 'user-1'), (error: unknown) => (error as { code?: string }).code === 'INSUFFICIENT_CUSTODY_BALANCE');
 });
 
-test('elimina lógicamente un préstamo heredado sin mover fondos y audita el estado anterior', async () => {
-  const calls: Array<{ sql: string; values: unknown[] }> = [];
-  const client = { query: async (sql: string, values: unknown[] = []) => {
-    calls.push({ sql, values });
-    if (sql.startsWith('SELECT id,cliente_id,socio_id')) return { rows: [{ id: 'loan-1', cliente_id: 'client-1', socio_id: 'partner-1', custodia_id: 'fund-1', capital_pendiente: '2000.00', tasa_mensual: '15', fecha_proximo_pago: '2026-10-11', es_heredado: true, estado: 'ACTIVO', eliminado_at: null }] };
-    if (sql.startsWith('SELECT EXISTS')) return { rows: [{ has_history: false }] };
-    if (sql.startsWith('UPDATE prestamos SET eliminado_at=')) return { rows: [{ eliminado_at: '2026-09-11T12:00:00.000Z' }] };
-    return { rows: [] };
-  } };
-  const result = await deleteInheritedLoan(client as never, 'loan-1', deleteInheritedLoanInput.parse({ motivo: 'Duplicado de migración' }), 'user-1');
-  assert.equal(result.estadoAnterior, 'ACTIVO');
-  assert.equal(calls.some((call) => call.sql.startsWith('UPDATE custodias') || call.sql.includes('INSERT INTO movimientos_')), false);
-  assert.equal(calls.some((call) => call.values.includes('ELIMINAR_LOGICO')), true);
+test('al cambiar socio devuelve la exposición al fondo anterior y la descuenta del nuevo', async () => {
+  const db = flexibleLoanClient({}, { [flexibleFundA]: 1000, [flexibleFundB]: 2000 });
+  await editLoan(db.client as never, 'loan-1', editPayload({ socioId: flexiblePartnerB, custodiaId: flexibleFundB }), 'user-1');
+  assert.equal(db.balances[flexibleFundA], 2000);
+  assert.equal(db.balances[flexibleFundB], 1200);
+  assert.equal(db.calls.filter((call) => call.sql.includes('INSERT INTO movimientos_custodia')).length, 2);
 });
 
-test('bloquea eliminar un préstamo con operaciones posteriores', async () => {
-  const client = { query: async (sql: string) => {
-    if (sql.startsWith('SELECT id,cliente_id,socio_id')) return { rows: [{ id: 'loan-1', es_heredado: true, estado: 'ACTIVO', eliminado_at: null }] };
-    if (sql.startsWith('SELECT EXISTS')) return { rows: [{ has_history: true }] };
-    return { rows: [] };
-  } };
-  await assert.rejects(deleteInheritedLoan(client as never, 'loan-1', { motivo: 'Duplicado de migración' }, 'user-1'), (error: unknown) => (error as { code?: string }).code === 'LOAN_HAS_OPERATIONAL_HISTORY');
+test('rechaza cambiar socio cuando el fondo nuevo no alcanza', async () => {
+  const db = flexibleLoanClient({}, { [flexibleFundA]: 1000, [flexibleFundB]: 700 });
+  await assert.rejects(editLoan(db.client as never, 'loan-1', editPayload({ socioId: flexiblePartnerB, custodiaId: flexibleFundB }), 'user-1'), (error: unknown) => (error as { code?: string }).code === 'INSUFFICIENT_CUSTODY_BALANCE');
 });
 
-test('bloquea eliminar préstamos creados por la aplicación', async () => {
-  const client = { query: async (sql: string) => sql.startsWith('SELECT id,cliente_id,socio_id') ? { rows: [{ id: 'loan-1', es_heredado: false, estado: 'ACTIVO', eliminado_at: null }] } : { rows: [] } };
-  await assert.rejects(deleteInheritedLoan(client as never, 'loan-1', { motivo: 'No corresponde' }, 'user-1'), (error: unknown) => (error as { code?: string }).code === 'LOAN_DELETE_NOT_ALLOWED');
+for (const inherited of [false, true]) test(`elimina lógicamente un préstamo ${inherited ? 'heredado' : 'nuevo'} aunque tenga historial`, async () => {
+  const db = flexibleLoanClient({ es_heredado: inherited, capital_pendiente: '700.00' });
+  const result = await deleteLoan(db.client as never, 'loan-1', deleteLoanInput.parse({ motivo: 'Retiro confirmado' }), 'user-1');
+  assert.equal(result.capitalDevuelto, '700.00');
+  assert.equal(db.balances[flexibleFundA], 5700);
+  assert.equal(db.calls.some((call) => call.sql.startsWith('SELECT EXISTS')), false);
+  assert.equal(db.calls.some((call) => call.values.includes('ELIMINAR_LOGICO')), true);
+});
+
+test('al eliminar un incobrable devuelve solo su saldo pendiente y nunca duplica la devolución', async () => {
+  const db = flexibleLoanClient({ estado: 'INCOBRABLE', capital_pendiente: '1000.00' });
+  const result = await deleteLoan(db.client as never, 'loan-1', { motivo: 'Retiro confirmado' }, 'user-1');
+  assert.equal(result.capitalDevuelto, '700.00');
+  assert.equal(db.balances[flexibleFundA], 5700);
+  await assert.rejects(deleteLoan(db.client as never, 'loan-1', { motivo: 'Segundo intento' }, 'user-1'), (error: unknown) => (error as { code?: string }).code === 'LOAN_ALREADY_DELETED');
+  assert.equal(db.balances[flexibleFundA], 5700);
+});
+
+test('al eliminar un préstamo pagado o anulado no devuelve capital ya recuperado', async () => {
+  for (const estado of ['PAGADO', 'ANULADO'] as const) {
+    const db = flexibleLoanClient({ estado, capital_pendiente: estado === 'PAGADO' ? '0.00' : '1000.00' });
+    const result = await deleteLoan(db.client as never, 'loan-1', { motivo: 'Retiro confirmado' }, 'user-1');
+    assert.equal(result.capitalDevuelto, '0.00');
+    assert.equal(db.balances[flexibleFundA], 5000);
+    assert.equal(db.calls.some((call) => call.sql.includes('INSERT INTO movimientos_custodia')), false);
+  }
 });

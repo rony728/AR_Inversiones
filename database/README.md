@@ -11,6 +11,7 @@ psql -v ON_ERROR_STOP=1 -d ar_inversiones -f database/migrations/003_legacy_migr
 psql -v ON_ERROR_STOP=1 -d ar_inversiones -f database/migrations/004_inventario_general_del_negocio.sql
 psql -v ON_ERROR_STOP=1 -d ar_inversiones -f database/migrations/005_complete_loan_management.sql
 psql -v ON_ERROR_STOP=1 -d ar_inversiones -f database/migrations/006_soft_delete_legacy_loans.sql
+psql -v ON_ERROR_STOP=1 -d ar_inversiones -f database/migrations/007_flexible_loan_adjustments.sql
 psql -v ON_ERROR_STOP=1 -d ar_inversiones -f database/tests/001_integrity_smoke_test.sql
 ```
 
@@ -19,3 +20,5 @@ No hay tablas ni funciones genéricas de aportes o retiros: toda variación de c
 `inventario` es el stock general de AR Inversiones y conserva un único costo promedio ponderado por producto. Las compras y ventas registran el socio únicamente para identificar la custodia PRODUCTOS que pagó o recibió el dinero.
 
 La migración inicial, sus reglas explícitas, la plantilla de saldos/propiedad y el reporte de simulación están documentados en `database/migration/README.md`.
+
+La eliminación lógica definida desde la migración `006` aplica a cualquier préstamo. La migración `007` agrega tipos de movimiento específicos para registrar, sin alterar el historial, las variaciones automáticas del fondo PRESTAMOS causadas por editar capital/socio o retirar un préstamo de la cartera.

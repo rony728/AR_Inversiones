@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { query, withTransaction } from '../../db/pool.js';
 import { AppError, asyncHandler } from '../../lib/errors.js';
 import { purchaseInput, registerPurchase, registerSale, saleInput } from './inventory-service.js';
-import { badDebtInput, cancelLoan, changeNextPaymentDate, correctInheritedLoan, createLoan, declareBadDebt, deleteInheritedLoan, deleteInheritedLoanInput, getLoanDetail, inheritedLoanCorrectionInput, loanInput, loanListSql, paymentInput, previewLoanPayment, recoveryInput, registerBadDebtRecovery, registerLoanPayment, rescheduleInput, reversalInput, reverseBadDebtRecovery, reverseLoanPayment, refreshOverdueLoans } from './loan-service.js';
+import { badDebtInput, cancelLoan, changeNextPaymentDate, createLoan, declareBadDebt, deleteLoan, deleteLoanInput, editLoan, getLoanDetail, loanEditInput, loanInput, loanListSql, paymentInput, previewLoanPayment, recoveryInput, registerBadDebtRecovery, registerLoanPayment, rescheduleInput, reversalInput, reverseBadDebtRecovery, reverseLoanPayment, refreshOverdueLoans } from './loan-service.js';
 import { transferBetweenCustodies, transferInput } from './custody-service.js';
 import { distributionInput, expenseInput, registerExpense, registerProfitDistribution } from './finance-service.js';
 import { approveInventoryAudit, inventoryAuditInput, startInventoryAudit } from './inventory-audit-service.js';
@@ -175,14 +175,14 @@ operationsRouter.post('/prestamos/:id/pagos', asyncHandler(async (req, res) => {
 }));
 
 operationsRouter.patch('/prestamos/:id', asyncHandler(async (req, res) => {
-  const loanId = z.string().uuid().parse(req.params.id); const input = inheritedLoanCorrectionInput.parse(req.body);
-  const result = await withTransaction((client) => correctInheritedLoan(client, loanId, input, req.user?.id));
+  const loanId = z.string().uuid().parse(req.params.id); const input = loanEditInput.parse(req.body);
+  const result = await withTransaction((client) => editLoan(client, loanId, input, req.user?.id));
   res.json({ data: result });
 }));
 
 operationsRouter.post('/prestamos/:id/eliminar', asyncHandler(async (req, res) => {
-  const loanId = z.string().uuid().parse(req.params.id); const input = deleteInheritedLoanInput.parse(req.body);
-  const result = await withTransaction((client) => deleteInheritedLoan(client, loanId, input, req.user?.id));
+  const loanId = z.string().uuid().parse(req.params.id); const input = deleteLoanInput.parse(req.body);
+  const result = await withTransaction((client) => deleteLoan(client, loanId, input, req.user?.id));
   res.json({ data: result });
 }));
 
