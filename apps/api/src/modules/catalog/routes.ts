@@ -1,11 +1,11 @@
 import { Router } from 'express';
-import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { query, withTransaction } from '../../db/pool.js';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError, asyncHandler } from '../../lib/errors.js';
 import { categoryCreateInput, categoryUpdateInput, productCreateInput, productUpdateInput } from './product-input.js';
 import { clientCreateInput, clientListSql, clientUpdateInput, createClient, summarizeClientLoans, updateClient } from './client-service.js';
+import { changeUserPassword, createUser, passwordChangeInput, updateUser, userCreateInput, userUpdateInput } from './user-service.js';
 
 type Resource = 'categorias' | 'proveedores' | 'productos' | 'usuarios';
 const resources: Record<Resource, { fields: readonly string[]; updateFields: readonly string[] }> = {
@@ -87,7 +87,7 @@ catalogRouter.post('/socios', asyncHandler(async (req, res) => {
 
 catalogRouter.patch('/socios/:id', asyncHandler(async (req, res) => {
   const partnerId = id.parse(req.params.id);
-  const input = z.object({ nombre: z.string().trim().min(2).max(120).optional(), activo: z.boolean().optional() }).refine((value) => value.nombre !== undefined || value.activo !== undefined).parse(req.body);
+  const input = z.object({ nombre: z.string().trim().min(2).max(120) }).strict().parse(req.body);
   const fields = Object.keys(input);
   const partner = await withTransaction(async (client) => {
     const before = await client.query('SELECT * FROM socios WHERE id = $1', [partnerId]);
@@ -100,17 +100,19 @@ catalogRouter.patch('/socios/:id', asyncHandler(async (req, res) => {
 }));
 
 catalogRouter.post('/usuarios', asyncHandler(async (req, res) => {
-  const input = z.object({ nombre: z.string().trim().min(2).max(160), usuario: z.string().trim().min(3).max(80), password: z.string().min(8).max(200) }).parse(req.body);
-  const created = await withTransaction(async (client) => {
-    const passwordHash = await bcrypt.hash(input.password, 12);
-    const result = await client.query<{ id: string; nombre: string; usuario: string; activo: boolean }>(
-      'INSERT INTO usuarios (nombre, usuario, password_hash) VALUES ($1, $2, $3) RETURNING id, nombre, usuario, activo',
-      [input.nombre, input.usuario, passwordHash]
-    );
-    await writeAudit(client, { usuarioId: req.user?.id, entidadTipo: 'usuario', entidadId: result.rows[0].id, accion: 'CREAR', nuevos: result.rows[0] });
-    return result.rows[0];
-  });
+  const input = userCreateInput.parse(req.body);
+  const created = await withTransaction((client) => createUser(client, input, req.user?.id));
   res.status(201).json({ data: created });
+}));
+
+catalogRouter.patch('/usuarios/:id', asyncHandler(async (req, res) => {
+  const userId = id.parse(req.params.id); const input = userUpdateInput.parse(req.body);
+  res.json({ data: await withTransaction((client) => updateUser(client, userId, input, req.user?.id)) });
+}));
+
+catalogRouter.patch('/usuarios/:id/password', asyncHandler(async (req, res) => {
+  const userId = id.parse(req.params.id); const input = passwordChangeInput.parse(req.body);
+  res.json({ data: await withTransaction((client) => changeUserPassword(client, userId, input, req.user?.id)) });
 }));
 
 catalogRouter.post('/categorias', asyncHandler(async (req, res) => {
@@ -210,13 +212,13 @@ catalogRouter.post('/:resource', asyncHandler(async (req, res) => {
 }));
 
 catalogRouter.patch('/:resource/:id', asyncHandler(async (req, res) => {
-  const resource = z.enum(['proveedores', 'usuarios']).parse(req.params.resource) as Resource;
+  const resource = z.literal('proveedores').parse(req.params.resource) as Resource;
   const resourceId = id.parse(req.params.id);
   const { fields, values } = permitted(resource, req.body as Record<string, unknown>, resources[resource].updateFields);
   const set = fields.map((field, index) => `${field} = $${index + 1}`).join(', ');
   const updated = await withTransaction(async (client) => {
     const before = await client.query(`SELECT * FROM ${resource} WHERE id = $1`, [resourceId]);
-    const result = await client.query(`UPDATE ${resource} SET ${set} WHERE id = $${fields.length + 1} RETURNING ${resource === 'usuarios' ? 'id, nombre, usuario, activo, created_at, updated_at' : '*'}`, [...values, resourceId]);
+    const result = await client.query(`UPDATE ${resource} SET ${set} WHERE id = $${fields.length + 1} RETURNING *`, [...values, resourceId]);
     if (!result.rows[0]) throw new AppError(404, 'Registro no encontrado.', 'NOT_FOUND');
     await writeAudit(client, { usuarioId: req.user?.id, entidadTipo: resource, entidadId: resourceId, accion: 'ACTUALIZAR', anteriores: before.rows[0], nuevos: result.rows[0] });
     return result.rows[0];
