@@ -16,19 +16,25 @@ const fundId = '22222222-2222-4222-8222-222222222222';
 const clientId = '33333333-3333-4333-8333-333333333333';
 const loans = ['Primero', 'Intermedio', 'Último'].map((cliente, index) => ({ id: `loan-${index + 1}`, cliente, cliente_id: clientId, socio: 'Rony', socio_id: partnerId, custodia_id: fundId, fondo_saldo: 5000, cliente_activo: true, capital_original: 1000, capital_pendiente: 800, intereses_pendientes: 120, periodos_pendientes: 1, total_adeudado: 920, tasa_mensual: 15, fecha_desembolso: null, fecha_proximo_pago: '2026-10-11', estado: 'ACTIVO', es_heredado: index !== 1, edicion_habilitada: true, observaciones: null }));
 const detail = (index: number) => ({ prestamo: loans[index], intereses: [], pagos: [], reprogramaciones: [], recuperaciones: [], anulacion: null, auditoria: [] });
+const partnerRows = (balances: Record<string, number>) => [
+  { id: '44444444-4444-4444-8444-444444444444', nombre: 'Alex', activo: true, custodias: [{ id: 'product-alex', actividad: 'PRODUCTOS', saldo_actual: 91001 }, { id: 'loan-alex', actividad: 'PRESTAMOS', saldo_actual: balances.Alex }] },
+  { id: '55555555-5555-4555-8555-555555555555', nombre: 'Brian', activo: true, custodias: [{ id: 'product-brian', actividad: 'PRODUCTOS', saldo_actual: 92002 }, { id: 'loan-brian', actividad: 'PRESTAMOS', saldo_actual: balances.Brian }] },
+  { id: partnerId, nombre: 'Rony', activo: true, custodias: [{ id: 'product-rony', actividad: 'PRODUCTOS', saldo_actual: 93003 }, { id: fundId, actividad: 'PRESTAMOS', saldo_actual: balances.Rony }] }
+];
 
 async function flush() { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); }); }
 function setText(element: HTMLTextAreaElement, value: string) { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(element, value); element.dispatchEvent(new Event('input', { bubbles: true })); }
 
 describe('modales de préstamos', () => {
-  let container: HTMLDivElement; let root: ReturnType<typeof createRoot>; let deletedIds: Set<string>;
+  let container: HTMLDivElement; let root: ReturnType<typeof createRoot>; let deletedIds: Set<string>; let loanBalances: Record<string, number>;
   beforeEach(async () => {
     deletedIds = new Set();
+    loanBalances = { Alex: 1005, Brian: 5911, Rony: 3000 };
     apiMock.mockImplementation(async (path: string, options?: { method?: string }) => {
       if (path === '/prestamos') return { data: loans.map((loan) => deletedIds.has(loan.id) ? { ...loan, eliminado_at: '2026-09-11T12:00:00Z', estado_antes_eliminacion: loan.estado, motivo_eliminacion: 'Duplicado de migración' } : loan) };
       if (path === '/catalogo/clientes') return { data: [{ id: clientId, nombre: 'Cliente', activo: true }] };
-      if (path === '/catalogo/socios') return { data: [{ id: partnerId, nombre: 'Rony', activo: true, custodias: [{ id: fundId, actividad: 'PRESTAMOS', saldo_actual: 5000 }] }] };
-      if (/^\/prestamos\/loan-\d$/.test(path) && options?.method === 'PATCH') return { data: loans[Number(path.at(-1)) - 1] };
+      if (path === '/catalogo/socios') return { data: partnerRows(loanBalances) };
+      if (/^\/prestamos\/loan-\d$/.test(path) && options?.method === 'PATCH') { loanBalances.Rony = 2800; return { data: loans[Number(path.at(-1)) - 1] }; }
       if (/^\/prestamos\/loan-\d\/eliminar$/.test(path) && options?.method === 'POST') { deletedIds.add(path.split('/')[2]); return { data: { id: path.split('/')[2] } }; }
       if (/^\/prestamos\/loan-\d$/.test(path)) { const value = detail(Number(path.at(-1)) - 1); return { data: deletedIds.has(value.prestamo.id) ? { ...value, prestamo: { ...value.prestamo, eliminado_at: '2026-09-11T12:00:00Z', estado_antes_eliminacion: value.prestamo.estado, motivo_eliminacion: 'Duplicado de migración' } } : value }; }
       throw new Error(`Ruta inesperada: ${path}`);
@@ -39,6 +45,29 @@ describe('modales de préstamos', () => {
     await act(async () => { root.render(<LoansPage />); }); await flush();
   });
   afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); apiMock.mockReset(); document.body.style.overflow = ''; });
+
+  it('muestra solo el fondo PRESTAMOS de los tres socios desde el catálogo de fondos', () => {
+    const funds = container.querySelector('.loan-funds')!;
+    expect(funds.querySelectorAll('.loan-fund-card')).toHaveLength(3);
+    expect(funds.textContent).toContain('Alex'); expect(funds.textContent).toContain('L 1005.00');
+    expect(funds.textContent).toContain('Brian'); expect(funds.textContent).toContain('L 5911.00');
+    expect(funds.textContent).toContain('Rony'); expect(funds.textContent).toContain('L 3000.00');
+    expect(funds.textContent).not.toContain('L 91001.00'); expect(funds.textContent).not.toContain('L 92002.00'); expect(funds.textContent).not.toContain('L 93003.00');
+    expect(apiMock.mock.calls.some(([path]) => path === '/catalogo/socios')).toBe(true);
+    expect(funds.querySelector('.loan-funds-grid')).toBeTruthy();
+    expect([...funds.querySelectorAll('.loan-fund-card')].every((card) => card.parentElement?.classList.contains('loan-funds-grid'))).toBe(true);
+  });
+
+  it('vuelve a consultar los fondos y actualiza las tarjetas después de editar', async () => {
+    const middleRow = [...container.querySelectorAll('tbody tr')].find((row) => row.textContent?.includes('Intermedio'))!;
+    await act(async () => { (middleRow.querySelector('button') as HTMLButtonElement).click(); });
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    await act(async () => setText(dialog.querySelector('textarea[required]')!, 'Capital actualizado'));
+    const save = [...dialog.querySelectorAll('button')].find((button) => button.textContent?.includes('Guardar edición')) as HTMLButtonElement;
+    await act(async () => save.click()); await flush();
+    await vi.waitFor(() => expect(container.querySelector('.loan-funds')?.textContent).toContain('L 2800.00'));
+    expect(apiMock.mock.calls.filter(([path]) => path === '/catalogo/socios').length).toBeGreaterThanOrEqual(2);
+  });
 
   it('envía desde el modal intermedio el mismo PATCH y muestra la confirmación', async () => {
     const middleRow = [...container.querySelectorAll('tbody tr')].find((row) => row.textContent?.includes('Intermedio'))!;
