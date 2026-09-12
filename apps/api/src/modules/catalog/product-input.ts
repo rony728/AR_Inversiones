@@ -3,6 +3,7 @@ import { z } from 'zod';
 const editableProductFields = {
   codigo: z.string().trim().min(1).max(80),
   nombre: z.string().trim().min(2).max(180),
+  descripcion: z.string().trim().max(2000).nullable().default(null),
   categoriaId: z.string().uuid().nullable(),
   precioVenta: z.coerce.number().min(0).max(999999999999.99),
   activo: z.boolean()
@@ -13,6 +14,7 @@ export const productCreateInput = z.object(editableProductFields).strict();
 export const productUpdateInput = z.object({
   codigo: editableProductFields.codigo.optional(),
   nombre: editableProductFields.nombre.optional(),
+  descripcion: editableProductFields.descripcion.optional(),
   categoriaId: editableProductFields.categoriaId.optional(),
   precioVenta: editableProductFields.precioVenta.optional(),
   activo: editableProductFields.activo.optional()

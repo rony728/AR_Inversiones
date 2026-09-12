@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { z } from 'zod';
 import { query, withTransaction } from '../../db/pool.js';
 import { writeAudit } from '../../lib/audit.js';
@@ -6,6 +6,8 @@ import { AppError, asyncHandler } from '../../lib/errors.js';
 import { categoryCreateInput, categoryUpdateInput, productCreateInput, productUpdateInput } from './product-input.js';
 import { clientCreateInput, clientListSql, clientUpdateInput, createClient, summarizeClientLoans, updateClient } from './client-service.js';
 import { changeUserPassword, createUser, passwordChangeInput, updateUser, userCreateInput, userUpdateInput } from './user-service.js';
+import { requireStoredProductImage, saveProductImage, type StoredProductImage } from './product-image-service.js';
+import { createProduct, productListSql, updateProduct } from './product-service.js';
 
 type Resource = 'categorias' | 'proveedores' | 'productos' | 'usuarios';
 const resources: Record<Resource, { fields: readonly string[]; updateFields: readonly string[] }> = {
@@ -141,57 +143,49 @@ catalogRouter.patch('/categorias/:id', asyncHandler(async (req, res) => {
 }));
 
 catalogRouter.get('/productos', asyncHandler(async (_req, res) => {
-  const result = await query(`
-    SELECT p.id, p.codigo, p.nombre, p.categoria_id, c.nombre AS categoria,
-           COALESCE(i.existencia, 0)::integer AS cantidad_disponible,
-           COALESCE(i.costo_promedio_unitario, 0)::numeric AS costo_promedio,
-           COALESCE(p.precio_sugerido, 0)::numeric AS precio_venta,
-           COALESCE(p.existencia_minima, 0)::integer AS existencia_minima,
-           p.activo, p.created_at, p.updated_at
-      FROM productos p
-      LEFT JOIN categorias c ON c.id = p.categoria_id
-      LEFT JOIN inventario i ON i.producto_id = p.id
-     ORDER BY p.nombre, p.codigo
-  `);
+  const result = await query(productListSql);
   res.json({ data: result.rows });
 }));
 
 catalogRouter.post('/productos', asyncHandler(async (req, res) => {
   const input = productCreateInput.parse(req.body);
-  const created = await withTransaction(async (client) => {
-    const result = await client.query(
-      `INSERT INTO productos (codigo, sku, nombre, categoria_id, precio_sugerido, activo)
-       VALUES ($1, $1, $2, $3, $4, $5)
-       RETURNING *`,
-      [input.codigo, input.nombre, input.categoriaId, input.precioVenta, input.activo]
-    );
-    await client.query(
-      'INSERT INTO inventario (producto_id, existencia, costo_promedio_unitario) VALUES ($1, 0, 0)',
-      [result.rows[0].id]
-    );
-    await writeAudit(client, { usuarioId: req.user?.id, entidadTipo: 'productos', entidadId: result.rows[0].id, accion: 'CREAR', nuevos: result.rows[0] });
-    return result.rows[0];
-  });
+  const created = await withTransaction((client) => createProduct(client, input, req.user?.id));
   res.status(201).json({ data: created });
 }));
 
 catalogRouter.patch('/productos/:id', asyncHandler(async (req, res) => {
   const productId = id.parse(req.params.id);
   const input = productUpdateInput.parse(req.body);
-  const fieldMap = { codigo: 'codigo', nombre: 'nombre', categoriaId: 'categoria_id', precioVenta: 'precio_sugerido', activo: 'activo' } as const;
-  const entries = Object.entries(input) as Array<[keyof typeof fieldMap, unknown]>;
-  const updated = await withTransaction(async (client) => {
-    const before = await client.query('SELECT * FROM productos WHERE id = $1', [productId]);
-    if (!before.rows[0]) throw new AppError(404, 'Producto no encontrado.', 'NOT_FOUND');
-    const set = entries.map(([field], index) => `${fieldMap[field]} = $${index + 1}`).join(', ');
-    const result = await client.query(
-      `UPDATE productos SET ${set} WHERE id = $${entries.length + 1} RETURNING *`,
-      [...entries.map(([, value]) => value), productId]
-    );
-    await writeAudit(client, { usuarioId: req.user?.id, entidadTipo: 'productos', entidadId: productId, accion: 'ACTUALIZAR', anteriores: before.rows[0], nuevos: result.rows[0] });
-    return result.rows[0];
-  });
+  const updated = await withTransaction((client) => updateProduct(client, productId, input, req.user?.id));
   res.json({ data: updated });
+}));
+
+catalogRouter.get('/productos/:id/imagen', asyncHandler(async (req, res) => {
+  const productId = id.parse(req.params.id);
+  const result = await query<StoredProductImage>(
+    'SELECT contenido,tipo_mime,tamano_bytes,hash_sha256 FROM producto_imagenes WHERE producto_id=$1',
+    [productId]
+  );
+  const image = requireStoredProductImage(result.rows[0]);
+  const etag = `\"${image.hash_sha256}\"`;
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  res.setHeader('ETag', etag);
+  if (req.header('if-none-match') === etag) return res.status(304).end();
+  res.type(image.tipo_mime);
+  res.setHeader('Content-Length', image.tamano_bytes);
+  return res.send(image.contenido);
+}));
+
+catalogRouter.patch('/productos/:id/imagen', express.raw({ type: ['image/jpeg', 'image/webp'], limit: '2mb' }), asyncHandler(async (req, res) => {
+  const productId = id.parse(req.params.id);
+  if (!Buffer.isBuffer(req.body)) throw new AppError(415, 'La imagen debe enviarse como JPEG o WebP.', 'UNSUPPORTED_IMAGE_TYPE');
+  const image = await withTransaction((client) => saveProductImage(client, {
+    productId,
+    content: req.body,
+    mimeType: req.header('content-type')?.split(';')[0].trim().toLowerCase() ?? '',
+    userId: req.user?.id
+  }));
+  res.json({ data: image });
 }));
 
 catalogRouter.get('/:resource', asyncHandler(async (req, res) => {

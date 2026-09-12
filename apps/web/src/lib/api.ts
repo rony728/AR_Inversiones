@@ -12,4 +12,14 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return body as T;
 }
 
+export async function apiBlob(path: string): Promise<Blob> {
+  const token = sessionStorage.getItem('ar-token');
+  const response = await fetch(`${API_URL}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { message?: string };
+    throw new Error(body.message ?? 'No se pudo cargar la imagen.');
+  }
+  return response.blob();
+}
+
 export const formatMoney = (value: number | string | undefined) => new Intl.NumberFormat('es-HN', { style: 'currency', currency: 'HNL', maximumFractionDigits: 2 }).format(Number(value ?? 0));
