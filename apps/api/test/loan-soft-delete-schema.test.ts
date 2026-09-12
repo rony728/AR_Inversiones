@@ -17,3 +17,14 @@ test('la migración 007 identifica ajustes de préstamo en fondos y finanzas', a
   assert.match(sql, /tipo_movimiento_custodia ADD VALUE IF NOT EXISTS 'AJUSTE_PRESTAMO'/);
   assert.match(sql, /tipo_movimiento_financiero ADD VALUE IF NOT EXISTS 'AJUSTE_PRESTAMO'/);
 });
+
+test('la migración 008 conserva transferencias históricas y formaliza ajustes de fondos', async () => {
+  const sql = await readFile(new URL('../../../database/migrations/008_cross_partner_transfers_and_fund_adjustments.sql', import.meta.url), 'utf8');
+  assert.match(sql, /ADD COLUMN socio_destino_id uuid REFERENCES socios/);
+  assert.match(sql, /UPDATE transferencias_custodia/);
+  assert.match(sql, /CREATE TABLE ajustes_fondo/);
+  assert.match(sql, /AJUSTE_MANUAL_FONDO/);
+  assert.match(sql, /diferencia <> 0 AND saldo_nuevo = saldo_anterior \+ diferencia/);
+  assert.doesNotMatch(sql, /movimientos_financieros/);
+  assert.doesNotMatch(sql, /DELETE FROM/);
+});

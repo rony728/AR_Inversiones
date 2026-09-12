@@ -16,6 +16,7 @@ La primera cuenta se crea una sola vez con `POST /api/v1/auth/bootstrap`. Despu�
 - `GET|POST|PATCH /api/v1/catalogo/usuarios`
 - `GET|POST|PATCH /api/v1/catalogo/socios`
 - Lecturas protegidas: `/compras`, `/ventas`, `/inventario`, `/prestamos`, `/pagos-prestamo`, `/custodias`, `/movimientos-financieros`, `/gastos`, `/auditorias`, `/auditoria-sistema`, `/sincronizacion`.
+- Fondos: `POST /transferencias-custodia` admite origen y destino independientes, incluso entre socios, y `POST /ajustes-fondo` registra correcciones justificadas sin afectar las métricas de ingresos, gastos o utilidad.
 
 `POST /api/v1/sincronizacion` recibe lotes de hasta 50 operaciones con UUID de dispositivo e idempotency key. Cada reintento se registra una sola vez en PostgreSQL. Mientras las reglas financieras de etapas posteriores no existan, las operaciones de compra, venta y préstamo quedan en estado `PENDIENTE` para su aplicación validada.
 

@@ -4,7 +4,7 @@ import { query, withTransaction } from '../../db/pool.js';
 import { AppError, asyncHandler } from '../../lib/errors.js';
 import { purchaseInput, registerPurchase, registerSale, saleInput } from './inventory-service.js';
 import { badDebtInput, cancelLoan, changeNextPaymentDate, createLoan, declareBadDebt, deleteLoan, deleteLoanInput, editLoan, getLoanDetail, loanEditInput, loanInput, loanListSql, paymentInput, previewLoanPayment, recoveryInput, registerBadDebtRecovery, registerLoanPayment, rescheduleInput, reversalInput, reverseBadDebtRecovery, reverseLoanPayment, refreshOverdueLoans } from './loan-service.js';
-import { transferBetweenCustodies, transferInput } from './custody-service.js';
+import { adjustFundBalance, fundAdjustmentInput, transferBetweenCustodies, transferInput } from './custody-service.js';
 import { distributionInput, expenseInput, registerExpense, registerProfitDistribution } from './finance-service.js';
 import { approveInventoryAudit, inventoryAuditInput, startInventoryAudit } from './inventory-audit-service.js';
 import { dashboardPeriodInput, getDashboard } from './dashboard-service.js';
@@ -178,6 +178,12 @@ operationsRouter.patch('/prestamos/:id', asyncHandler(async (req, res) => {
   const loanId = z.string().uuid().parse(req.params.id); const input = loanEditInput.parse(req.body);
   const result = await withTransaction((client) => editLoan(client, loanId, input, req.user?.id));
   res.json({ data: result });
+}));
+
+operationsRouter.post('/ajustes-fondo', asyncHandler(async (req, res) => {
+  const input = fundAdjustmentInput.parse(req.body);
+  const result = await withTransaction((client) => adjustFundBalance(client, input, req.user?.id));
+  res.status(201).json({ data: result });
 }));
 
 operationsRouter.post('/prestamos/:id/eliminar', asyncHandler(async (req, res) => {

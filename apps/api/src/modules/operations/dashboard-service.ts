@@ -35,7 +35,7 @@ export async function getDashboard(client: PoolClient, desde: string, hasta: str
     UNION ALL SELECT id,'PRESTAMO',COALESCE(fecha_desembolso,created_at::date)::timestamp,capital_original,'Préstamo desembolsado' FROM prestamos WHERE eliminado_at IS NULL AND es_heredado=false AND estado<>'ANULADO'
     UNION ALL SELECT pp.id,'PAGO_PRESTAMO',pp.fecha_pago::timestamp,pp.monto_total,concat('Pago de préstamo · interés L ',pp.monto_interes,' · capital L ',pp.monto_capital) FROM pagos_prestamo pp JOIN prestamos p ON p.id=pp.prestamo_id WHERE p.eliminado_at IS NULL AND pp.revertido_at IS NULL
     UNION ALL SELECT id,'GASTO',fecha::timestamp,monto,concepto FROM gastos WHERE estado='CONFIRMADO'
-    UNION ALL SELECT id,'TRANSFERENCIA_FONDOS',fecha,monto,'Transferencia entre fondos del mismo socio' FROM transferencias_custodia
+    UNION ALL SELECT id,'TRANSFERENCIA_FONDOS',fecha,monto,'Transferencia entre fondos' FROM transferencias_custodia
     UNION ALL SELECT id,'DISTRIBUCION_UTILIDAD',fecha::timestamp,utilidad_total,'Distribución de utilidad' FROM distribuciones_utilidades
   ) actividad WHERE fecha::date BETWEEN $1 AND $2 ORDER BY fecha DESC LIMIT 12`, [desde, hasta]);
   const ventas = Number(row.ventas_periodo); const gananciaVentas = Number(row.ganancia_ventas); const gastos = Number(row.gastos_periodo); const intereses = Number(row.intereses_cobrados); const otrosIngresos = Number(row.recuperaciones_incobrables); const perdidasPrestamo = Number(row.perdidas_prestamo);
