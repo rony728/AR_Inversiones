@@ -23,7 +23,7 @@ function custodyClient(initial: Record<string, number> = {}) {
     if (sql.startsWith('INSERT INTO transferencias_custodia')) return { rows: [{ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' }] };
     if (sql.startsWith('INSERT INTO ajustes_fondo')) return { rows: [{ id: 'ffffffff-ffff-4fff-8fff-ffffffffffff' }] };
     if (sql.startsWith('INSERT INTO gastos')) return { rows: [{ id: '66666666-6666-4666-8666-666666666666' }] };
-    if (sql.startsWith('UPDATE custodias SET saldo_actual=CASE')) { funds.get(String(values[0]))!.saldo_actual = String(values[1]); funds.get(String(values[2]))!.saldo_actual = String(values[3]); return { rows: [] }; }
+    if (sql.startsWith('UPDATE custodias SET saldo_actual=CASE')) { assert.match(sql, /\$2::numeric/); assert.match(sql, /\$4::numeric/); funds.get(String(values[0]))!.saldo_actual = String(values[1]); funds.get(String(values[2]))!.saldo_actual = String(values[3]); return { rows: [] }; }
     if (sql.startsWith('UPDATE custodias SET saldo_actual=')) { funds.get(String(values[1]))!.saldo_actual = String(values[0]); return { rows: [] }; }
     if (sql.startsWith('SELECT id FROM clientes') || sql.startsWith('SELECT id FROM socios')) return { rows: [{ id: values[0] }] };
     if (sql.startsWith('SELECT saldo_actual FROM custodias')) return { rows: [{ saldo_actual: funds.get(String(values[0]))?.saldo_actual }] };
