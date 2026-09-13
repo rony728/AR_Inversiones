@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { emptyProductFilters, filterProducts, productProfit, sortProducts, type ProductRow } from './product-catalog';
+import { emptyProductFilters, filterProducts, productProfit, sortProducts, uniqueNumericValues, type ProductRow } from './product-catalog';
 
 const products: ProductRow[] = [
   { id: '1', codigo: 'CAF-01', nombre: 'Café molido', descripcion: null, categoria_id: 'a', categoria: 'Alimentos', cantidad_disponible: 0, costo_promedio: 120, precio_venta: 180, existencia_minima: 2, activo: true },
@@ -25,10 +25,17 @@ describe('catálogo de productos', () => {
     expect(filterProducts(products, { ...emptyProductFilters, stock: 'with' })).toEqual([products[1]]);
   });
 
-  it('filtra rangos inclusivos de existencia, costo y precio', () => {
-    expect(filterProducts(products, { ...emptyProductFilters, stockMin: '8', stockMax: '8' })).toEqual([products[1]]);
-    expect(filterProducts(products, { ...emptyProductFilters, costMin: '100', costMax: '130' })).toEqual([products[0]]);
-    expect(filterProducts(products, { ...emptyProductFilters, priceMin: '30', priceMax: '40' })).toEqual([products[1]]);
+  it('filtra valores exactos de existencia, costo y precio como números', () => {
+    expect(filterProducts(products, { ...emptyProductFilters, stockValue: '8' })).toEqual([products[1]]);
+    expect(filterProducts(products, { ...emptyProductFilters, costValue: '120.00' })).toEqual([products[0]]);
+    expect(filterProducts(products, { ...emptyProductFilters, priceValue: '35' })).toEqual([products[1]]);
+  });
+
+  it('deriva opciones numéricas únicas y ordenadas de los productos cargados', () => {
+    const repeated = [...products, { ...products[1], id: '3', cantidad_disponible: '8', costo_promedio: '55', precio_venta: '95' }];
+    expect(uniqueNumericValues(repeated, 'cantidad_disponible')).toEqual([0, 8]);
+    expect(uniqueNumericValues(repeated, 'costo_promedio')).toEqual([20, 55, 120]);
+    expect(uniqueNumericValues(repeated, 'precio_venta')).toEqual([35, 95, 180]);
   });
 
   it('ordena código, categoría y estado en ambos sentidos', () => {

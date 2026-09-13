@@ -27,7 +27,7 @@ describe('módulo Productos', () => {
   beforeEach(async () => {
     products = structuredClone(initialProducts);
     apiMock.mockImplementation(async (path: string, options?: RequestInit) => {
-      if (path === '/catalogo/productos' && !options?.method) return { data: products };
+      if (path === '/catalogo/productos' && !options?.method) return { data: structuredClone(products) };
       if (path === '/catalogo/categorias') return { data: categories };
       if (path === '/catalogo/productos/prod-1' && options?.method === 'PATCH') { const body = JSON.parse(String(options.body)); products[0] = { ...products[0], codigo: body.codigo, nombre: body.nombre, descripcion: body.descripcion, categoria_id: body.categoriaId, categoria: categories.find((item) => item.id === body.categoriaId)?.nombre ?? null, precio_venta: body.precioVenta, activo: body.activo }; return { data: { id: 'prod-1' } }; }
       if (path === '/catalogo/productos/prod-2' && options?.method === 'PATCH') return { data: { id: 'prod-2' } };
@@ -67,6 +67,10 @@ describe('módulo Productos', () => {
     expect(body).toMatchObject({ nombre: 'Café premium', descripcion: 'Nueva descripción', categoriaId: 'cat-b', precioVenta: 55 });
     expect(body).not.toHaveProperty('id'); expect(body).not.toHaveProperty('existencia'); expect(body).not.toHaveProperty('costoPromedio');
     expect(products[0].id).toBe('prod-1'); expect(products[0].cantidad_disponible).toBe(0); expect(products[0].costo_promedio).toBe(55);
+    await vi.waitFor(() => {
+      const priceFilter = container.querySelector('[aria-label="Precio de venta"]') as HTMLSelectElement;
+      expect([...priceFilter.options].map((option) => option.textContent)).toEqual(['Todos', 'L 35.00', 'L 55.00']);
+    });
   });
 
   it('agrega y reemplaza imagen con controles separados de cámara y galería', async () => {
@@ -87,20 +91,31 @@ describe('módulo Productos', () => {
     }
   });
 
-  it('filtra categoría, estado, rangos, agotados y limpia filtros', async () => {
+  it('filtra categoría, estado, valores exactos, agotados y limpia filtros', async () => {
     const panel = container.querySelector('.product-filter-panel')!;
     await act(async () => { setInput(panel.querySelector('select')!, 'cat-a'); }); expect(container.querySelector('tbody')!.textContent).toContain('Café'); expect(container.querySelector('tbody')!.textContent).not.toContain('Vaso');
     await act(async () => { clickByText(panel, 'Limpiar filtros'); setInput(panel.querySelectorAll('select')[1], 'inactive'); }); expect(container.querySelector('tbody')!.textContent).toContain('Vaso');
     await act(async () => { clickByText(panel, 'Limpiar filtros'); clickByText(panel, 'Agotados'); }); expect(container.querySelector('tbody')!.textContent).toContain('Café');
-    await act(async () => { clickByText(panel, 'Limpiar filtros'); setInput(panel.querySelector('[aria-label="Existencia mínima"]')!, '8'); setInput(panel.querySelector('[aria-label="Costo promedio máxima"]')!, '25'); setInput(panel.querySelector('[aria-label="Precio de venta mínima"]')!, '30'); }); expect(container.querySelector('tbody')!.textContent).toContain('Vaso'); expect(container.querySelector('tbody')!.textContent).not.toContain('Café');
-    await act(async () => { clickByText(panel, 'Limpiar filtros'); }); expect(container.querySelectorAll('tbody tr')).toHaveLength(2); expect((panel.querySelector('[aria-label="Existencia mínima"]') as HTMLInputElement).value).toBe('');
+    for (const [label, value] of [['Cantidad disponible', '8'], ['Costo promedio', '20'], ['Precio de venta', '35']] as const) {
+      await act(async () => { clickByText(panel, 'Limpiar filtros'); setInput(panel.querySelector(`[aria-label="${label}"]`)!, value); });
+      expect(container.querySelector('tbody')!.textContent).toContain('Vaso'); expect(container.querySelector('tbody')!.textContent).not.toContain('Café');
+    }
+    expect([...panel.querySelector<HTMLSelectElement>('[aria-label="Cantidad disponible"]')!.options].map((option) => option.textContent)).toEqual(['Todos', '0', '8']);
+    expect([...panel.querySelector<HTMLSelectElement>('[aria-label="Costo promedio"]')!.options].map((option) => option.textContent)).toEqual(['Todos', 'L 20.00', 'L 55.00']);
+    expect([...panel.querySelector<HTMLSelectElement>('[aria-label="Precio de venta"]')!.options].map((option) => option.textContent)).toEqual(['Todos', 'L 35.00', 'L 95.00']);
+    await act(async () => { clickByText(panel, 'Limpiar filtros'); }); expect(container.querySelectorAll('tbody tr')).toHaveLength(2); expect((panel.querySelector('[aria-label="Cantidad disponible"]') as HTMLSelectElement).value).toBe('');
   });
 
-  it('ordena columnas ascendente/descendente y mantiene tarjetas responsive', async () => {
+  it('ordena columnas ascendente/descendente, muestra su estado y limpia el orden', async () => {
     const table = container.querySelector('table')!; const codes = () => [...table.querySelectorAll('tbody tr')].map((row) => row.children[1].textContent);
-    await act(async () => { clickByText(table.querySelector('thead')!, 'Código'); }); expect(codes()).toEqual(['CAF-01', 'VAS-02']);
-    await act(async () => { clickByText(table.querySelector('thead')!, 'Código'); }); expect(codes()).toEqual(['VAS-02', 'CAF-01']);
-    for (const label of ['Producto', 'Categoría', 'Cantidad', 'Costo promedio', 'Precio', 'Estado']) expect([...table.querySelectorAll('th button')].some((button) => button.textContent?.includes(label))).toBe(true);
+    const heading = (label: string) => table.querySelector(`button[aria-label^="${label}:"]`) as HTMLButtonElement;
+    for (const label of ['Código', 'Producto', 'Categoría', 'Cantidad', 'Costo promedio', 'Precio', 'Estado']) expect(heading(label)).toBeTruthy();
+    expect(heading('Producto').getAttribute('aria-label')).toBe('Producto: ascendente'); expect(heading('Cantidad').textContent).toContain('↕');
+    await act(async () => { heading('Precio').click(); }); expect(codes()).toEqual(['VAS-02', 'CAF-01']); expect(heading('Precio').textContent).toContain('↑');
+    await act(async () => { heading('Precio').click(); }); expect(codes()).toEqual(['CAF-01', 'VAS-02']); expect(heading('Precio').getAttribute('aria-label')).toBe('Precio: descendente'); expect(heading('Precio').textContent).toContain('↓');
+    await act(async () => { heading('Costo promedio').click(); }); expect(codes()).toEqual(['VAS-02', 'CAF-01']);
+    await act(async () => { heading('Costo promedio').click(); }); expect(codes()).toEqual(['CAF-01', 'VAS-02']);
+    await act(async () => { clickByText(container.querySelector('.product-filter-panel')!, 'Limpiar filtros'); }); expect(codes()).toEqual(['CAF-01', 'VAS-02']); expect(heading('Producto').getAttribute('aria-label')).toBe('Producto: ascendente');
     expect(container.querySelector('.product-mobile-cards')?.children).toHaveLength(2); expect(container.querySelectorAll('.product-actions-mobile')).toHaveLength(2);
   });
 });

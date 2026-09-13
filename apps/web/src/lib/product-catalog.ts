@@ -31,22 +31,17 @@ export type ProductFilters = {
   categoryId: string;
   status: 'all' | 'active' | 'inactive';
   stock: 'all' | 'with' | 'without';
-  stockMin: string;
-  stockMax: string;
-  costMin: string;
-  costMax: string;
-  priceMin: string;
-  priceMax: string;
+  stockValue: string;
+  costValue: string;
+  priceValue: string;
 };
 
-export const emptyProductFilters: ProductFilters = { search: '', categoryId: '', status: 'all', stock: 'all', stockMin: '', stockMax: '', costMin: '', costMax: '', priceMin: '', priceMax: '' };
+export const emptyProductFilters: ProductFilters = { search: '', categoryId: '', status: 'all', stock: 'all', stockValue: '', costValue: '', priceValue: '' };
 
 export const normalizeSearch = (value: unknown) => String(value ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLocaleLowerCase('es-HN');
 
-function inRange(value: number, minimum: string, maximum: string) {
-  const min = minimum === '' ? null : Number(minimum);
-  const max = maximum === '' ? null : Number(maximum);
-  return (min === null || value >= min) && (max === null || value <= max);
+function matchesExactValue(value: number, selected: string) {
+  return selected === '' || value === Number(selected);
 }
 
 export function filterProducts(rows: ProductRow[], filters: ProductFilters | string) {
@@ -59,10 +54,14 @@ export function filterProducts(rows: ProductRow[], filters: ProductFilters | str
     const matchesStatus = resolved.status === 'all' || (resolved.status === 'active' ? row.activo : !row.activo);
     const matchesStock = resolved.stock === 'all' || (resolved.stock === 'with' ? quantity > 0 : quantity === 0);
     return matchesSearch && matchesCategory && matchesStatus && matchesStock
-      && inRange(quantity, resolved.stockMin, resolved.stockMax)
-      && inRange(Number(row.costo_promedio), resolved.costMin, resolved.costMax)
-      && inRange(Number(row.precio_venta), resolved.priceMin, resolved.priceMax);
+      && matchesExactValue(quantity, resolved.stockValue)
+      && matchesExactValue(Number(row.costo_promedio), resolved.costValue)
+      && matchesExactValue(Number(row.precio_venta), resolved.priceValue);
   });
+}
+
+export function uniqueNumericValues(rows: ProductRow[], field: 'cantidad_disponible' | 'costo_promedio' | 'precio_venta') {
+  return [...new Set(rows.map((row) => Number(row[field])).filter(Number.isFinite))].sort((left, right) => left - right);
 }
 
 export function sortProducts(rows: ProductRow[], sort: ProductSort, direction: SortDirection) {
