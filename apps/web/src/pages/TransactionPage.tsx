@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Minus, Plus } from 'lucide-react';
+import { Minus, Plus, Search, X } from 'lucide-react';
 import { ClientSearchSelect } from '../components/ClientSearchSelect';
 import { ProductSearchSelect } from '../components/ProductSearchSelect';
 import { api, formatMoney } from '../lib/api';
@@ -33,6 +33,8 @@ export function TransactionPage({ kind }: { kind: 'compra' | 'venta' }) {
   const [lines, setLines] = useState<Line[]>([{ productoId: '', cantidad: 1, valor: 0 }]);
   const [observations, setObservations] = useState('');
   const [message, setMessage] = useState('');
+  const [history, setHistory] = useState<Row[]>([]);
+  const [historySearch, setHistorySearch] = useState('');
   const [processing, setProcessing] = useState(false);
   const requestInFlight = useRef(false);
 
@@ -40,11 +42,13 @@ export function TransactionPage({ kind }: { kind: 'compra' | 'venta' }) {
     void Promise.all([
       load('/catalogo/productos', 'productos'),
       load('/catalogo/socios', 'custodias'),
-      load(sale ? '/catalogo/clientes' : '/catalogo/proveedores', sale ? 'clientes' : undefined)
-    ]).then(([loadedProducts, loadedPartners, loadedContacts]) => {
+      load(sale ? '/catalogo/clientes' : '/catalogo/proveedores', sale ? 'clientes' : undefined),
+      load(sale ? '/ventas' : '/compras', sale ? 'ventas' : 'compras')
+    ]).then(([loadedProducts, loadedPartners, loadedContacts, loadedHistory]) => {
       setProducts(loadedProducts as unknown as ProductRow[]);
       setPartners(loadedPartners);
       setContacts(loadedContacts);
+      setHistory(loadedHistory);
     });
   }, [sale]);
 
@@ -61,6 +65,16 @@ export function TransactionPage({ kind }: { kind: 'compra' | 'venta' }) {
   const remainingBalance = productsFund ? productsFund.balance - total : null;
   const saleFundBalance = productsFund ? productsFund.balance + saleSummary.subtotal : null;
   const change = (index: number, update: Partial<Line>) => setLines((current) => current.map((line, lineIndex) => lineIndex === index ? { ...line, ...update } : line));
+  const contactName = (row: Row) => {
+    const id = sale ? row.cliente_id : row.proveedor_id;
+    return String(contacts.find((contact) => contact.id === id)?.nombre ?? (sale ? 'Cliente no especificado' : 'Proveedor no especificado'));
+  };
+  const partnerName = (row: Row) => String(partners.find((partner) => partner.id === row.socio_id)?.nombre ?? '—');
+  const filteredHistory = useMemo(() => {
+    const term = historySearch.trim().toLocaleLowerCase('es-HN');
+    if (!term) return history;
+    return history.filter((row) => `${contactName(row)} ${partnerName(row)} ${row.id ?? ''} ${row.estado ?? ''}`.toLocaleLowerCase('es-HN').includes(term));
+  }, [contacts, history, historySearch, partners, sale]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -114,6 +128,7 @@ export function TransactionPage({ kind }: { kind: 'compra' | 'venta' }) {
           setObservations('');
           setPartners(await load('/catalogo/socios', 'custodias'));
         }
+        setHistory(await load(sale ? '/ventas' : '/compras', sale ? 'ventas' : 'compras'));
       }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo guardar la operación.');
@@ -157,5 +172,11 @@ export function TransactionPage({ kind }: { kind: 'compra' | 'venta' }) {
       {sale && saleIssue && <p className="purchase-warning">{saleIssue.message}</p>}
       {message && <p className="form-message">{message}</p>}
     </form>
+    <section className="panel list-panel transaction-history">
+      <div className="panel-head transaction-history-head"><div><h3>{sale ? 'Ventas registradas' : 'Compras registradas'}</h3><p>Consulta rápida de las operaciones disponibles en este dispositivo.</p></div><strong>{filteredHistory.length} de {history.length}</strong></div>
+      <div className="table-tools transaction-history-tools"><div className="search"><Search size={16} /><input value={historySearch} onChange={(event) => setHistorySearch(event.target.value)} placeholder={`Buscar ${sale ? 'venta' : 'compra'}…`} />{historySearch && <button type="button" aria-label="Limpiar búsqueda" onClick={() => setHistorySearch('')}><X size={14} /></button>}</div></div>
+      <div className="table-wrap desktop-record-table"><table><thead><tr><th>Fecha</th><th>{sale ? 'Cliente' : 'Proveedor'}</th><th>Socio</th>{sale && <th>Utilidad</th>}<th>Total</th><th>Estado</th><th>Referencia</th></tr></thead><tbody>{filteredHistory.length ? filteredHistory.map((row) => <tr key={String(row.id)}><td>{String(row.fecha ?? '').slice(0, 10) || '—'}</td><td>{contactName(row)}</td><td>{partnerName(row)}</td>{sale && <td>{formatMoney(row.ganancia_total as string)}</td>}<td><strong>{formatMoney(row.total as string)}</strong></td><td><span className="status">{String(row.estado ?? 'REGISTRADA')}</span></td><td>{String(row.id ?? '—').slice(0, 8)}</td></tr>) : <tr><td className="empty-cell" colSpan={sale ? 7 : 6}>No hay {sale ? 'ventas' : 'compras'} registradas.</td></tr>}</tbody></table></div>
+      <div className="mobile-record-list" aria-label={sale ? 'Ventas en formato móvil' : 'Compras en formato móvil'}>{filteredHistory.length ? filteredHistory.map((row) => <article className="mobile-record-card" key={String(row.id)}><div className="mobile-record-header"><div><span className="mobile-record-date">{String(row.fecha ?? '').slice(0, 10) || '—'}</span><h4>{contactName(row)}</h4></div><span className="status">{String(row.estado ?? 'REGISTRADA')}</span></div><strong className="mobile-record-primary">{formatMoney(row.total as string)}</strong><div className="mobile-record-grid"><span>Socio<strong>{partnerName(row)}</strong></span>{sale && <span>Utilidad<strong>{formatMoney(row.ganancia_total as string)}</strong></span>}<span>Referencia<strong>{String(row.id ?? '—').slice(0, 8)}</strong></span></div>{Boolean(row.observaciones) && <details className="mobile-record-detail"><summary>Ver detalle</summary><p>{String(row.observaciones)}</p></details>}</article>) : <p className="mobile-record-empty">No hay {sale ? 'ventas' : 'compras'} registradas.</p>}</div>
+    </section>
   </>;
 }

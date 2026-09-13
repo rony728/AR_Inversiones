@@ -343,3 +343,75 @@ td { color: var(--text-main); }
 @media(max-width:1000px){.product-filter-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.product-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:768px){.product-modal-overlay{padding:9px}.product-modal{width:100%;max-height:calc(100dvh - 18px);border-radius:10px}.product-modal>.panel{border-radius:10px}.product-detail-panel,.product-form-panel{padding:16px}.product-detail-layout,.product-form{grid-template-columns:1fr}.product-image-large{max-width:none;max-height:280px}.product-detail-grid{grid-template-columns:1fr 1fr}.product-filter-top{align-items:stretch;flex-direction:column}.product-filter-top>.compact{width:100%;margin-left:0;justify-content:center}.product-stock-quick{display:grid;grid-template-columns:1fr 1fr}.product-filter-grid{grid-template-columns:1fr 1fr}.product-image-mobile-actions{display:flex;width:100%}.product-image-mobile-actions button{flex:1;justify-content:center}.product-image-desktop-action{display:none}.product-edit-fields{grid-template-columns:1fr}.product-description-field,.product-protected-values{grid-column:auto}}
 @media(max-width:480px){.product-detail-grid,.product-filter-grid{grid-template-columns:1fr}.product-description{grid-column:auto}.product-modal-actions{display:grid;grid-template-columns:1fr 1fr}.product-modal-actions button{justify-content:center}.product-card-header>.status{align-self:flex-start}}
+
+/* Listas operativas: tabla en escritorio y tarjetas táctiles en móvil */
+.mobile-record-list { display: none; }
+.transaction-history { margin-top: 20px; }
+.transaction-history-head { border-bottom: 1px solid var(--border-color); }
+.transaction-history-head > strong { color: var(--text-main); font-size: 12px; white-space: nowrap; }
+.transaction-history-tools .search { width: min(430px, 100%); }
+.transaction-history-tools .search input { width: 100%; }
+.transaction-history-tools .search button { border: 0; background: transparent; color: var(--text-muted); display: grid; place-items: center; }
+
+@media(max-width:899px) {
+  .desktop-record-table { display: none; }
+  .mobile-record-list { display: grid; gap: 12px; padding: 14px; }
+  .mobile-record-list.compact { padding: 0; }
+  .mobile-record-card { display: grid; gap: 13px; min-width: 0; padding: 16px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: #fff; box-shadow: var(--shadow-sm); overflow-wrap: anywhere; }
+  .mobile-record-inactive { background: var(--bg-subtle); opacity: .82; }
+  .mobile-record-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; min-width: 0; }
+  .mobile-record-header > div { min-width: 0; }
+  .mobile-record-header h4 { margin: 2px 0 0; color: var(--text-main); font: 700 15px var(--font-heading); overflow-wrap: anywhere; }
+  .mobile-record-kicker, .mobile-record-date, .mobile-record-label { display: block; color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .02em; }
+  .mobile-record-primary { display: block; margin-top: 3px; color: var(--text-main); font: 800 21px var(--font-heading); }
+  .mobile-record-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .mobile-record-grid > span { display: grid; gap: 3px; min-width: 0; color: var(--text-muted); font-size: 10px; }
+  .mobile-record-grid strong { color: var(--text-main); font-size: 12px; overflow-wrap: anywhere; }
+  .mobile-record-actions { display: flex; flex-wrap: wrap; gap: 9px; padding-top: 2px; }
+  .mobile-record-actions button { min-height: 44px; flex: 1 1 105px; justify-content: center; }
+  .mobile-record-detail { border-top: 1px solid var(--border-color); padding-top: 10px; }
+  .mobile-record-detail summary { min-height: 40px; display: flex; align-items: center; color: var(--primary); font-size: 12px; font-weight: 700; cursor: pointer; }
+  .mobile-record-detail p { margin: 7px 0 0; color: var(--text-muted); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .mobile-record-empty { margin: 0; padding: 24px 12px; text-align: center; color: var(--text-muted); }
+  .audit-difference { color: #b85b3c; }
+
+  .transaction-history .panel-head, .audit-history-head { align-items: flex-start; gap: 10px; }
+  .transaction-history-tools { padding: 12px 14px; }
+  .transaction-history-tools .search { width: 100%; }
+  .client-tools, .loan-tools { align-items: stretch; flex-direction: column; }
+  .client-tools > strong, .loan-tools > strong { margin-left: 0; }
+  .client-filters { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; }
+  .client-filters button { min-height: 40px; }
+  .loan-tools .search, .loan-tools select { width: 100%; min-height: 44px; }
+  .loans-title .quick-actions { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
+  .loans-title .quick-actions button { min-height: 44px; justify-content: center; }
+  .loans-title .quick-actions .primary { grid-column: 1 / -1; }
+  .loan-summary.metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .loan-mobile-card .legacy-badge { margin: 5px 0 0; }
+  .loan-funds-grid { grid-template-columns: 1fr; }
+
+  .loan-modal-overlay { padding: 8px; align-items: center; }
+  .loan-modal-content { width: 100%; max-height: calc(100dvh - 16px); border-radius: 10px; overscroll-behavior: contain; }
+  .loan-modal-content > .panel { border-radius: 10px; }
+  .loan-modal-content .panel-head { position: sticky; top: 0; z-index: 2; margin: -20px -20px 14px; padding: 16px 20px; background: #fff; border-bottom: 1px solid var(--border-color); }
+  .loan-modal-content .close-button { min-width: 44px; min-height: 44px; }
+  .loan-detail-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .loan-detail-actions button { min-height: 44px; justify-content: center; white-space: normal; }
+  .loan-action-form button { min-height: 44px; }
+
+  .audit-line { grid-template-columns: 1fr 1fr; }
+  .audit-line label:first-child { grid-column: 1 / -1; }
+  .audit-line .icon-button { min-width: 44px; min-height: 44px; justify-self: start; }
+  .audit-form .panel-head { align-items: flex-start; flex-direction: column; }
+  .audit-form .panel-head .secondary, .audit-submit, .approve-audit { width: 100%; min-height: 44px; justify-content: center; }
+  .audit-detail-cards { padding: 14px 20px; }
+}
+
+@media(max-width:480px) {
+  .mobile-record-grid { grid-template-columns: 1fr; }
+  .loan-summary.metrics { grid-template-columns: 1fr; }
+  .loans-title .quick-actions, .loan-detail-actions { grid-template-columns: 1fr; }
+  .loans-title .quick-actions .primary { grid-column: auto; }
+  .audit-line { grid-template-columns: 1fr; }
+  .audit-line label:first-child { grid-column: auto; }
+}
