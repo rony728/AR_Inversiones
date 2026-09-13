@@ -421,6 +421,8 @@ td { color: var(--text-main); }
 .client-modal { width: min(1080px, 100%); max-height: calc(100dvh - 44px); overflow-y: auto; border-radius: 13px; box-shadow: 0 24px 70px #102a4352; overscroll-behavior: contain; }
 .client-modal > .panel { margin: 0; border: 0; border-radius: 13px; }
 .client-modal .client-detail { margin-top: 0; }
+.loan-filter-field { display: grid; gap: 4px; color: #526b8a; font-size: 10px; font-weight: 700; }
+.loan-filter-field select { min-width: 135px; }
 
 @media(max-width:899px) {
   .client-modal-overlay { padding: 8px; }
@@ -430,6 +432,8 @@ td { color: var(--text-main); }
   .client-modal .close-button { min-width: 44px; min-height: 44px; }
   .client-modal .client-form-actions { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
   .client-modal .client-form-actions button { min-height: 44px; justify-content: center; }
+  .loan-filter-field { width: 100%; }
+  .loan-filter-field select { width: 100%; }
 }
 
 @media(max-width:480px) {
