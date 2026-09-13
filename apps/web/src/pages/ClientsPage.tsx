@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { Eye, Pencil, Plus, RefreshCw, Search, UserRound, X } from 'lucide-react';
 import { api, formatMoney } from '../lib/api';
 import { cacheList, getCachedList } from '../lib/offline-db';
@@ -54,6 +55,7 @@ export function ClientsPage() {
   const [detailClientId, setDetailClientId] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
+  const detailRequestRef = useRef(0);
 
   async function load() {
     setSource('loading');
@@ -111,16 +113,36 @@ export function ClientsPage() {
   }
 
   async function showDetail(client: ClientRow) {
+    const requestId = ++detailRequestRef.current;
     setDetailClientId(client.id); setDetailError(''); setDetailLoading(true); setDetail(null);
     if (source !== 'server') {
       setDetail(cachedDetail(client)); setDetailLoading(false); return;
     }
     try {
       const result = await api<{ data: ClientDetail }>(`/catalogo/clientes/${client.id}`);
-      setDetail(result.data);
-    } catch (error) { setDetailError(error instanceof Error ? error.message : 'No se pudo cargar el detalle.'); }
-    finally { setDetailLoading(false); }
+      if (requestId === detailRequestRef.current) setDetail(result.data);
+    } catch (error) { if (requestId === detailRequestRef.current) setDetailError(error instanceof Error ? error.message : 'No se pudo cargar el detalle.'); }
+    finally { if (requestId === detailRequestRef.current) setDetailLoading(false); }
   }
+
+  function closeDetail() {
+    detailRequestRef.current += 1;
+    setDetail(null); setDetailError(''); setDetailLoading(false);
+  }
+
+  const formPanel = formOpen && <section className="panel client-form-panel">
+    <div className="panel-head"><div><h3>{editing ? 'Editar cliente' : 'Nuevo cliente'}</h3><p>Los campos de identificación, teléfono, dirección y notas son opcionales.</p></div><button type="button" className="close-button" aria-label="Cerrar" onClick={() => setFormOpen(false)}><X size={18} /></button></div>
+    <form className="client-form" onSubmit={save}>
+      <label>Nombre<input required maxLength={180} autoFocus value={form.nombre} onChange={(event) => setForm({ ...form, nombre: event.target.value })} /></label>
+      <label>Identificación<input maxLength={80} value={form.identificacion} onChange={(event) => setForm({ ...form, identificacion: event.target.value })} /></label>
+      <label>Teléfono<input maxLength={50} value={form.telefono} onChange={(event) => setForm({ ...form, telefono: event.target.value })} /></label>
+      <label className="client-address">Dirección<textarea rows={2} value={form.direccion} onChange={(event) => setForm({ ...form, direccion: event.target.value })} /></label>
+      <label className="client-notes">Notas<textarea rows={3} value={form.notas} onChange={(event) => setForm({ ...form, notas: event.target.value })} /></label>
+      {editing && <label className="checkbox-field"><input type="checkbox" checked={form.activo} onChange={(event) => setForm({ ...form, activo: event.target.checked })} /> Cliente activo</label>}
+      <div className="client-form-actions"><button className="primary" disabled={saving || !canWrite || unchanged}>{saving ? 'Guardando cliente…' : 'Guardar cliente'}</button><button type="button" className="secondary" onClick={() => setFormOpen(false)}>Cancelar</button></div>
+      {formError && <p className="form-error client-form-message">{formError}</p>}
+    </form>
+  </section>;
 
   return <>
     <section className="page-title clients-title"><div><p className="eyebrow">RELACIONES</p><h2>Clientes</h2><p>Directorio e historial comercial de clientes.</p></div><button className="primary" onClick={openNew} disabled={!canWrite}><Plus size={18} /> Nuevo cliente</button></section>
@@ -128,19 +150,7 @@ export function ClientsPage() {
     {source === 'error' && <div className="client-load-error"><strong>No fue posible cargar los clientes y no hay una copia local disponible.</strong><button className="secondary" type="button" onClick={() => void load()}><RefreshCw size={15} /> Reintentar</button></div>}
     {notice && <div className="form-message client-notice">{notice}<button aria-label="Cerrar mensaje" onClick={() => setNotice('')}><X size={15} /></button></div>}
 
-    {formOpen && <section className="panel client-form-panel">
-      <div className="panel-head"><div><h3>{editing ? 'Editar cliente' : 'Nuevo cliente'}</h3><p>Los campos de identificación, teléfono, dirección y notas son opcionales.</p></div><button type="button" className="close-button" aria-label="Cerrar" onClick={() => setFormOpen(false)}><X size={18} /></button></div>
-      <form className="client-form" onSubmit={save}>
-        <label>Nombre<input required maxLength={180} autoFocus value={form.nombre} onChange={(event) => setForm({ ...form, nombre: event.target.value })} /></label>
-        <label>Identificación<input maxLength={80} value={form.identificacion} onChange={(event) => setForm({ ...form, identificacion: event.target.value })} /></label>
-        <label>Teléfono<input maxLength={50} value={form.telefono} onChange={(event) => setForm({ ...form, telefono: event.target.value })} /></label>
-        <label className="client-address">Dirección<textarea rows={2} value={form.direccion} onChange={(event) => setForm({ ...form, direccion: event.target.value })} /></label>
-        <label className="client-notes">Notas<textarea rows={3} value={form.notas} onChange={(event) => setForm({ ...form, notas: event.target.value })} /></label>
-        {editing && <label className="checkbox-field"><input type="checkbox" checked={form.activo} onChange={(event) => setForm({ ...form, activo: event.target.checked })} /> Cliente activo</label>}
-        <div className="client-form-actions"><button className="primary" disabled={saving || !canWrite || unchanged}>{saving ? 'Guardando cliente…' : 'Guardar cliente'}</button><button type="button" className="secondary" onClick={() => setFormOpen(false)}>Cancelar</button></div>
-        {formError && <p className="form-error client-form-message">{formError}</p>}
-      </form>
-    </section>}
+    {formOpen && editing ? <ClientModal label={`Editar cliente ${editing.nombre}`} onClose={() => setFormOpen(false)}>{formPanel}</ClientModal> : formPanel}
 
     <section className="panel list-panel clients-panel">
       <div className="table-tools client-tools"><div className="search client-search"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nombre, identificación o teléfono…" />{search && <button type="button" aria-label="Limpiar búsqueda" onClick={() => setSearch('')}><X size={15} /></button>}</div><div className="client-filters" role="group" aria-label="Filtrar por estado">{(['todos', 'activos', 'inactivos'] as const).map((filter) => <button type="button" key={filter} className={status === filter ? 'active' : ''} onClick={() => setStatus(filter)}>{filter[0].toUpperCase() + filter.slice(1)}</button>)}</div><span className={`data-freshness ${source}`}>{source === 'server' ? 'Datos actuales' : source === 'cache' ? 'Copia del dispositivo' : source === 'loading' ? 'Consultando…' : 'Sin datos'}</span><strong>{rows.length} de {clients.length} clientes</strong></div>
@@ -150,8 +160,8 @@ export function ClientsPage() {
       <div className="mobile-record-list" aria-label="Clientes en formato móvil">{rows.length ? rows.map((client) => <article className={`mobile-record-card ${!client.activo ? 'mobile-record-inactive' : ''}`} key={client.id}><div className="mobile-record-header"><div><span className="mobile-record-kicker">Cliente</span><h4>{client.nombre}</h4></div><span className={`status ${client.activo ? '' : 'status-inactive'}`}>{client.activo ? 'Activo' : 'Inactivo'}</span></div><div className="mobile-record-grid"><span>Teléfono<strong>{client.telefono || '—'}</strong></span><span>Activos / vencidos<strong>{Number(client.prestamos_activos ?? 0)} / {Number(client.prestamos_vencidos ?? 0)}</strong></span></div><div><span className="mobile-record-label">Capital pendiente</span><strong className="mobile-record-primary">{formatMoney(client.capital_pendiente_total)}</strong></div><div className="mobile-record-actions"><button className="edit-button" type="button" onClick={() => void showDetail(client)}><Eye size={15} /> Ver</button><button className="edit-button" type="button" disabled={!canWrite} onClick={() => openEdit(client)}><Pencil size={15} /> Editar</button></div></article>) : <p className="mobile-record-empty">{source === 'loading' ? 'Cargando clientes…' : 'No hay clientes que coincidan con los filtros.'}</p>}</div>
     </section>
 
-    {(detailLoading || detailError || detail) && <section className="panel client-detail">
-      <div className="panel-head"><div><h3><UserRound size={17} /> Detalle del cliente</h3><p>Información personal y relación histórica con el negocio.</p></div><button className="close-button" type="button" aria-label="Cerrar detalle" onClick={() => { setDetail(null); setDetailError(''); }}><X size={18} /></button></div>
+    {(detailLoading || detailError || detail) && <ClientModal label="Detalle del cliente" onClose={closeDetail}><section className="panel client-detail">
+      <div className="panel-head"><div><h3><UserRound size={17} /> Detalle del cliente</h3><p>Información personal y relación histórica con el negocio.</p></div><button className="close-button" type="button" aria-label="Cerrar detalle" onClick={closeDetail}><X size={18} /></button></div>
       {detailLoading && <div className="empty-state">Cargando detalle…</div>}
       {detailError && <div className="client-detail-error"><p>{detailError}</p><button className="secondary" onClick={() => { const selected = clients.find((client) => client.id === detailClientId); if (selected) void showDetail(selected); }}>Reintentar</button></div>}
       {detail && <>
@@ -161,6 +171,29 @@ export function ClientsPage() {
         {detail.prestamos && <div className="client-history"><h4>Préstamos</h4><div className="table-wrap desktop-record-table"><table><thead><tr><th>Desembolso</th><th>Capital original</th><th>Capital pendiente</th><th>Tasa mensual</th><th>Próximo pago</th><th>Estado</th></tr></thead><tbody>{detail.prestamos.length ? detail.prestamos.map((loan) => <tr key={loan.id}><td>{date(loan.fecha_desembolso)}</td><td>{formatMoney(loan.capital_original)}</td><td>{formatMoney(loan.capital_pendiente)}</td><td>{Number(loan.tasa_mensual)}%</td><td>{date(loan.fecha_proximo_pago)}</td><td>{loan.estado}</td></tr>) : <tr><td colSpan={6} className="empty-cell">Este cliente no tiene préstamos.</td></tr>}</tbody></table></div><div className="mobile-record-list compact">{detail.prestamos.length ? detail.prestamos.map((loan) => <article className="mobile-record-card" key={loan.id}><div className="mobile-record-header"><strong>{date(loan.fecha_desembolso)}</strong><span className="status">{loan.estado}</span></div><strong className="mobile-record-primary">{formatMoney(loan.capital_pendiente)}</strong><div className="mobile-record-grid"><span>Capital original<strong>{formatMoney(loan.capital_original)}</strong></span><span>Próximo pago<strong>{date(loan.fecha_proximo_pago)}</strong></span><span>Tasa mensual<strong>{Number(loan.tasa_mensual)}%</strong></span></div></article>) : <p className="mobile-record-empty">Este cliente no tiene préstamos.</p>}</div></div>}
         {detail.ventas && <div className="client-history"><h4>Ventas</h4><div className="table-wrap desktop-record-table"><table><thead><tr><th>Fecha</th><th>Total</th><th>Ganancia</th><th>Estado</th></tr></thead><tbody>{detail.ventas.length ? detail.ventas.map((sale) => <tr key={sale.id}><td>{date(sale.fecha)}</td><td>{formatMoney(sale.total)}</td><td>{formatMoney(sale.ganancia_total)}</td><td>{sale.estado}</td></tr>) : <tr><td colSpan={4} className="empty-cell">Este cliente no tiene ventas asociadas.</td></tr>}</tbody></table></div><div className="mobile-record-list compact">{detail.ventas.length ? detail.ventas.map((sale) => <article className="mobile-record-card" key={sale.id}><div className="mobile-record-header"><strong>{date(sale.fecha)}</strong><span className="status">{sale.estado}</span></div><strong className="mobile-record-primary">{formatMoney(sale.total)}</strong><div className="mobile-record-grid"><span>Ganancia<strong>{formatMoney(sale.ganancia_total)}</strong></span></div></article>) : <p className="mobile-record-empty">Este cliente no tiene ventas asociadas.</p>}</div></div>}
       </>}
-    </section>}
+    </section></ClientModal>}
   </>;
+}
+
+function ClientModal({ children, label, onClose }: { children: React.ReactNode; label: string; onClose: () => void }) {
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
+    const overflow = document.body.style.overflow;
+    const paddingRight = document.body.style.paddingRight;
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') closeRef.current(); };
+    document.body.style.overflow = 'hidden';
+    if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`;
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('keydown', closeOnEscape);
+      document.body.style.overflow = overflow;
+      document.body.style.paddingRight = paddingRight;
+      window.scrollTo(scrollX, scrollY);
+    };
+  }, []);
+  return createPortal(<div className="client-modal-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="client-modal" role="dialog" aria-modal="true" aria-label={label}>{children}</div></div>, document.body);
 }
