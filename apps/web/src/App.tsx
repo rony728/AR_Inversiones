@@ -21,7 +21,7 @@ import { api } from './lib/api';
 export function App() {
   const [authenticated, setAuthenticated] = useState(() => Boolean(sessionStorage.getItem('ar-token')));
   const [userName, setUserName] = useState(() => { try { return JSON.parse(sessionStorage.getItem('ar-user') ?? '{}').nombre ?? ''; } catch { return ''; } });
-  useEffect(() => beginSyncListener(), []);
+  useEffect(() => authenticated ? beginSyncListener() : undefined, [authenticated]);
   useEffect(() => { if (authenticated && !userName) void api<{ user: { nombre: string } }>('/auth/me').then((result) => { setUserName(result.user.nombre); sessionStorage.setItem('ar-user', JSON.stringify(result.user)); }).catch(() => undefined); }, [authenticated, userName]);
   if (!authenticated) return <Login onLogin={(user) => { setUserName(user.nombre); setAuthenticated(true); }} />;
   return <Shell userName={userName || 'Equipo AR'} onLogout={() => { sessionStorage.removeItem('ar-token'); sessionStorage.removeItem('ar-user'); setUserName(''); setAuthenticated(false); }}><Routes>

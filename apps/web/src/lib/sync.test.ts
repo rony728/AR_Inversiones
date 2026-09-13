@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeAll, expect, test, vi } from 'vitest';
 import { pendingCount, queueMutation, resetOfflineDatabase } from './offline-db';
-import { synchronizePending } from './sync';
+import { subscribeSyncState, synchronizePending, type SyncSnapshot } from './sync';
 
 beforeAll(async () => { await resetOfflineDatabase(); });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -13,8 +13,11 @@ test('una operación creada sin conexión se envía una vez y no se duplica en s
   const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [{ id: operation.id, status: 'APLICADA' }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
   vi.stubGlobal('fetch', fetchMock);
 
-  expect(await synchronizePending()).toEqual({ sent: 1, offline: false });
+  const snapshots: SyncSnapshot[] = []; const unsubscribe = subscribeSyncState((snapshot) => snapshots.push({ ...snapshot }));
+  expect(await synchronizePending()).toEqual({ sent: 1, offline: false }); unsubscribe();
   expect(await pendingCount()).toBe(0);
+  expect(snapshots.some((snapshot) => snapshot.syncing)).toBe(true);
+  expect(snapshots.at(-1)?.syncing).toBe(false); expect(snapshots.at(-1)?.lastSyncedAt).toBeTruthy();
   expect(fetchMock).toHaveBeenCalledTimes(1);
   expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).operations[0].idempotencyKey).toBe(operation.idempotencyKey);
   expect(await synchronizePending()).toEqual({ sent: 0, offline: false });

@@ -1,4 +1,6 @@
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api/v1';
+export const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api/v1';
+export const PRODUCTION_API_URL = 'https://api-ar-inversiones.rtdev.uk/api/v1';
+export const isProductionApiUrl = (url = API_URL) => url.replace(/\/+$/, '') === PRODUCTION_API_URL;
 
 export type ApiResponse<T> = { data: T };
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {

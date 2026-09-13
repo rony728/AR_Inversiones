@@ -16,6 +16,7 @@ La primera cuenta se crea una sola vez con `POST /api/v1/auth/bootstrap`. Despu�
 - Imágenes de producto: `GET|PATCH /api/v1/catalogo/productos/:id/imagen`. El `PATCH` recibe JPEG/WebP binario optimizado de hasta 1.5 MB; el listado devuelve solo metadatos y nunca incluye el blob.
 - `GET|POST|PATCH /api/v1/catalogo/usuarios`
 - `GET|POST|PATCH /api/v1/catalogo/socios`
+- Presencia autenticada: `POST /api/v1/presencia/heartbeat` y `GET /api/v1/presencia/activos`. Solo se devuelven identificador y nombre de usuarios activos durante los últimos dos minutos; los heartbeats no generan auditoría.
 - Lecturas protegidas: `/compras`, `/ventas`, `/inventario`, `/prestamos`, `/pagos-prestamo`, `/custodias`, `/movimientos-financieros`, `/gastos`, `/auditorias`, `/auditoria-sistema`, `/sincronizacion`.
 - Fondos: `POST /transferencias-custodia` admite origen y destino independientes, incluso entre socios, y `POST /ajustes-fondo` registra correcciones justificadas sin afectar las métricas de ingresos, gastos o utilidad.
 
