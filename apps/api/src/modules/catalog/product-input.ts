@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 const editableProductFields = {
-  codigo: z.string().trim().min(1).max(80),
+  codigo: z.string().trim().max(80).nullable().optional().default(null).transform((value) => value || null),
   nombre: z.string().trim().min(2).max(180),
   descripcion: z.string().trim().max(2000).nullable().default(null),
   categoriaId: z.string().uuid().nullable(),

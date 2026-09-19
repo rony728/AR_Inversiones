@@ -3,7 +3,7 @@ import test from 'node:test';
 import { previewLoanPayment, registerLoanPayment, reverseLoanPayment } from '../src/modules/operations/loan-service.js';
 
 type InterestState = { id: string; fecha_vencimiento: string; capital_base: string; monto_interes: string; saldo_pendiente: string; generado_por_pago_id: string | null; cancelado_at: string | null; cancelado_por_reversion_pago_id: string | null };
-type PaymentState = { id: string; monto_total: string; monto_capital: string; fecha_pago: string; estado_prestamo_anterior: 'ACTIVO' | 'VENCIDO'; fecha_proximo_pago_anterior: string; revertido_at: string | null; order: number };
+type PaymentState = { id: string; monto_total: string; monto_extra?: string; monto_capital: string; fecha_pago: string; estado_prestamo_anterior: 'ACTIVO' | 'VENCIDO'; fecha_proximo_pago_anterior: string; revertido_at: string | null; order: number };
 
 class LoanMemoryClient {
   loan = { id: 'loan-1', cliente_id: 'client-1', socio_id: 'partner-1', custodia_id: 'fund-1', capital_pendiente: '1000.00', tasa_mensual: '15', fecha_proximo_pago: '2026-10-01', calcular_interes_desde: '2026-09-01', estado: 'ACTIVO' as const };
@@ -16,7 +16,7 @@ class LoanMemoryClient {
   async query(sql: string, values: unknown[] = []) {
     if (sql.startsWith('SELECT id,cliente_id,socio_id')) return { rows: [{ ...this.loan }] };
     if (sql.startsWith('SELECT id,fecha_vencimiento,capital_base,monto_interes,saldo_pendiente FROM intereses_prestamo WHERE prestamo_id')) return { rows: this.interests.filter((item) => Number(item.saldo_pendiente) > 0 && !item.cancelado_at).map((item) => ({ ...item })) };
-    if (sql.startsWith('INSERT INTO pagos_prestamo ')) { const id = `payment-${this.payments.length + 1}`; this.payments.push({ id, fecha_pago: String(values[2]), monto_total: String(values[3]), monto_capital: String(values[5]), estado_prestamo_anterior: values[9] as 'ACTIVO' | 'VENCIDO', fecha_proximo_pago_anterior: String(values[10]), revertido_at: null, order: this.payments.length + 1 }); return { rows: [{ id }] }; }
+    if (sql.startsWith('INSERT INTO pagos_prestamo ')) { const id = `payment-${this.payments.length + 1}`; this.payments.push({ id, fecha_pago: String(values[2]), monto_total: String(values[3]), monto_extra: String(values[4]), monto_capital: String(values[6]), estado_prestamo_anterior: values[10] as 'ACTIVO' | 'VENCIDO', fecha_proximo_pago_anterior: String(values[11]), revertido_at: null, order: this.payments.length + 1 }); return { rows: [{ id }] }; }
     if (sql === 'UPDATE intereses_prestamo SET saldo_pendiente=0 WHERE id=$1') { this.interests.find((item) => item.id === values[0])!.saldo_pendiente = '0.00'; return { rows: [] }; }
     if (sql.startsWith('INSERT INTO pagos_intereses_prestamo')) { this.allocations.push({ pago_prestamo_id: String(values[0]), interes_prestamo_id: String(values[1]), monto_aplicado: String(values[2]) }); return { rows: [] }; }
     if (sql.startsWith('UPDATE prestamos SET capital_pendiente=')) { this.loan.capital_pendiente = String(values[0]); this.loan.fecha_proximo_pago = String(values[1]); this.loan.estado = values[2] as typeof this.loan.estado; return { rows: [] }; }
@@ -69,6 +69,15 @@ test('pago mixto usa la fecha del pago y calcula el nuevo interés sobre capital
   assert.equal(payment.fechaProximoPago, '2026-10-11');
   assert.equal(db.loan.capital_pendiente, '800.00');
   assert.equal(db.interests.at(-1)?.monto_interes, '120.00');
+});
+
+test('monto extra se acredita al fondo sin reducir capital ni interés', async () => {
+  const db = new LoanMemoryClient();
+  const payment = await registerLoanPayment(db as never, db.loan.id, { fechaPago: '2026-09-11', monto: 150, montoExtra: 50 });
+  assert.equal(payment.capitalRestante, '1000.00');
+  assert.equal(payment.montoExtra, '50.00');
+  assert.equal(payment.totalRecibido, '200.00');
+  assert.equal(db.custody, 1200);
 });
 
 test('liquidación total deja el préstamo pagado y no genera otro interés', async () => {

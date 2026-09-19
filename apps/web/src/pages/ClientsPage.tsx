@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Eye, Pencil, Plus, RefreshCw, Search, UserRound, X } from 'lucide-react';
 import { api, formatMoney } from '../lib/api';
 import { cacheList, getCachedList } from '../lib/offline-db';
+import { formatDate } from '../lib/date-format';
 import { clientFormFromRow, clientFormsEqual, clientPayload, filterClients, type ClientForm, type ClientRow, type ClientStatusFilter } from '../lib/client-catalog';
 
 type Loan = { id: string; fecha_desembolso: string; capital_original: string; capital_pendiente: string; tasa_mensual: string; fecha_proximo_pago: string; estado: string };
@@ -16,11 +17,7 @@ type ClientDetail = {
 type DataSource = 'loading' | 'server' | 'cache' | 'error';
 
 const emptyForm: ClientForm = { nombre: '', identificacion: '', telefono: '', direccion: '', notas: '', activo: true };
-const date = (value?: string) => {
-  if (!value) return '—';
-  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(value.slice(0, 10)) && value.length === 10 ? new Date(`${value}T12:00:00`) : new Date(value);
-  return new Intl.DateTimeFormat('es-HN', { dateStyle: 'medium' }).format(parsed);
-};
+const date = (value?: string) => formatDate(value);
 
 function cachedDetail(client: ClientRow): ClientDetail {
   return {

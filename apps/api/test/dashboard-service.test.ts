@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { dashboardPeriodInput, getDashboard, netPeriodProfit } from '../src/modules/operations/dashboard-service.js';
 
-test('calcula ganancia neta sin tratar capital ni transferencias como ingreso', () => {
-  assert.equal(netPeriodProfit(1200, 300, 450), 1050);
-  assert.equal(netPeriodProfit(1200, 300, 450, 200, 500), 750);
+test('calcula ganancia operativa de un rubro sin restar pérdidas informativas', () => {
+  assert.equal(netPeriodProfit(1200, 300), 900);
+  assert.equal(netPeriodProfit(2000, 500), 1500);
 });
 
 test('valida un período inclusivo y rechaza fechas invertidas', () => {
@@ -14,8 +14,8 @@ test('valida un período inclusivo y rechaza fechas invertidas', () => {
 
 test('las consultas del dashboard excluyen préstamos eliminados', async () => {
   const calls: string[] = [];
-  const client = { query: async (sql: string) => { calls.push(sql); return calls.length === 1 ? { rows: [{ ventas_periodo: '0', ganancia_ventas: '0', gastos_periodo: '0', intereses_cobrados: '0', recuperaciones_incobrables: '0', perdidas_prestamo: '0', capital_prestado_actual: '0', prestamos_vencidos: 0, fondos_totales: '0', valor_inventario: '0' }] } : { rows: [] }; } };
+  const client = { query: async (sql: string) => { calls.push(sql); return calls.length === 1 ? { rows: [{ ventas_periodo: '0', ganancia_ventas: '0', gastos_productos: '0', gastos_prestamos: '0', intereses_cobrados: '0', extras_cobrados: '0', recuperaciones_incobrables: '0', perdidas_prestamo: '0', capital_prestado_actual: '0', prestamos_vencidos: 0, fondos_totales: '0', valor_inventario: '0' }] } : { rows: [] }; } };
   await getDashboard(client as never, '2026-09-01', '2026-09-30');
   assert.match(calls[0], /eliminado_at IS NULL AND estado IN \('ACTIVO','VENCIDO'\)/);
-  assert.match(calls[1], /eliminado_at IS NULL AND es_heredado=false/);
+  assert.match(calls[1], /p\.eliminado_at IS NULL AND p\.es_heredado=false/);
 });

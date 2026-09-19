@@ -8,6 +8,7 @@ import { adjustFundBalance, fundAdjustmentInput, transferBetweenCustodies, trans
 import { distributionInput, expenseInput, registerExpense, registerProfitDistribution } from './finance-service.js';
 import { approveInventoryAudit, inventoryAuditInput, startInventoryAudit } from './inventory-audit-service.js';
 import { dashboardPeriodInput, getDashboard } from './dashboard-service.js';
+import { getProfitSummary } from './profit-service.js';
 
 const readModels = {
   compras: { table: 'compras', order: 'created_at' }, ventas: { table: 'ventas', order: 'created_at' },
@@ -60,8 +61,8 @@ operationsRouter.post('/sincronizacion', asyncHandler(async (req, res) => {
         await client.query(`UPDATE operaciones_sincronizacion SET estado='APLICADA', aplicado_at=now() WHERE clave_idempotencia=$1`, [operation.idempotencyKey]);
       }
       if (inserted.rows[0].inserted && operation.action === 'CREATE' && operation.entityType === 'pago_prestamo') {
-        const payload = z.object({ prestamoId: z.string().uuid(), fechaPago: z.string().date().optional(), monto: z.coerce.number().positive() }).parse(operation.payload);
-        await registerLoanPayment(client, payload.prestamoId, paymentInput.parse({ fechaPago: payload.fechaPago, monto: payload.monto }));
+        const payload = z.object({ prestamoId: z.string().uuid(), fechaPago: z.string().date().optional(), monto: z.coerce.number().positive(), montoExtra: z.coerce.number().min(0).optional() }).parse(operation.payload);
+        await registerLoanPayment(client, payload.prestamoId, paymentInput.parse({ fechaPago: payload.fechaPago, monto: payload.monto, montoExtra: payload.montoExtra }));
         status = 'APLICADA';
         await client.query(`UPDATE operaciones_sincronizacion SET estado='APLICADA', aplicado_at=now() WHERE clave_idempotencia=$1`, [operation.idempotencyKey]);
       }
@@ -95,6 +96,12 @@ operationsRouter.post('/sincronizacion', asyncHandler(async (req, res) => {
 operationsRouter.get('/dashboard', asyncHandler(async (req, res) => {
   const period = dashboardPeriodInput.parse(req.query);
   const result = await withTransaction(async (client) => { await refreshOverdueLoans(client, new Date().toISOString().slice(0, 10)); return getDashboard(client, period.desde, period.hasta); });
+  res.json({ data: result });
+}));
+
+operationsRouter.get('/finanzas/resumen', asyncHandler(async (req, res) => {
+  const hasta = z.string().date().default(() => new Date().toISOString().slice(0, 10)).parse(req.query.hasta);
+  const result = await withTransaction((client) => getProfitSummary(client, hasta));
   res.json({ data: result });
 }));
 

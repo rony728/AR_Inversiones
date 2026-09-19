@@ -17,7 +17,7 @@ describe('vista previa de distribución de utilidad', () => {
   let container: HTMLDivElement; let root: ReturnType<typeof createRoot>;
   beforeEach(async () => {
     vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(true);
-    apiMock.mockImplementation(async (path: string) => path === '/catalogo/socios' ? { data: partners } : path === '/movimientos-financieros' ? { data: [] } : path === '/distribuciones' ? { data: { id: 'distribution-1' } } : Promise.reject(new Error(`Ruta inesperada: ${path}`)));
+    apiMock.mockImplementation(async (path: string) => path === '/catalogo/socios' ? { data: partners } : path.startsWith('/finanzas/resumen') ? { data: [{ rubro: 'PRODUCTOS', ingresos: '5000', costos: '0', gastos: '0', perdidas: '0', distribuido: '0', gananciaOperativa: '5000', disponible: '5000' }, { rubro: 'PRESTAMOS', ingresos: '0', costos: '0', gastos: '0', perdidas: '0', distribuido: '0', gananciaOperativa: '0', disponible: '0' }] } : path === '/movimientos-financieros' ? { data: [] } : path === '/distribuciones' ? { data: { id: 'distribution-1' } } : Promise.reject(new Error(`Ruta inesperada: ${path}`)));
     container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container); await act(async () => root.render(<Finanzas />)); await flush();
   });
   afterEach(async () => { await act(async () => root.unmount()); container.remove(); apiMock.mockReset(); vi.restoreAllMocks(); });
@@ -34,11 +34,11 @@ describe('vista previa de distribución de utilidad', () => {
   it('usa centavos exactos como el backend y avisa si no son divisibles', async () => {
     expect(distributionSharePreview('100.02')).toEqual({ amount: 33.34, divisible: true }); expect(distributionSharePreview('100')).toEqual({ amount: 0, divisible: false });
     const input = container.querySelector('.distribution-form input[type="number"]') as HTMLInputElement; await act(async () => setInput(input, '100.02')); expect(container.querySelector('.distribution-share output')?.textContent).toBe('L 33.34');
-    await act(async () => setInput(input, '100')); expect(container.querySelector('.distribution-share output')?.textContent).toBe('No divisible exactamente'); expect(container.querySelector('.distribution-share small')?.textContent).toContain('centavos exactos');
+    await act(async () => setInput(input, '100')); expect(container.querySelector('.distribution-share output')?.textContent).toBe('No divisible exactamente');
   });
 
   it('conserva el payload y comportamiento de confirmación existente', async () => {
     const form = container.querySelector('.distribution-form') as HTMLFormElement; const input = form.querySelector('input[type="number"]') as HTMLInputElement; await act(async () => setInput(input, '3000')); await act(async () => form.requestSubmit()); await flush();
-    const request = apiMock.mock.calls.find(([path]) => path === '/distribuciones'); expect(request).toBeTruthy(); const payload = JSON.parse(request![1].body); expect(payload.utilidadTotal).toBe(3000); expect(payload.socios).toHaveLength(3); expect(container.textContent).toContain('Distribución registrada con cuotas trazables.'); expect(container.querySelector('.distribution-share output')?.textContent).toBe('L 0.00');
+    const request = apiMock.mock.calls.find(([path]) => path === '/distribuciones'); expect(request).toBeTruthy(); const payload = JSON.parse(request![1].body); expect(payload.utilidadTotal).toBe(3000); expect(payload.rubro).toBe('PRODUCTOS'); expect(payload.coberturas).toHaveLength(0); expect(container.textContent).toContain('Distribución registrada.'); expect(container.querySelector('.distribution-share output')?.textContent).toBe('L 0.00');
   });
 });

@@ -30,7 +30,7 @@ export async function createProduct(client: PoolClient, input: ProductCreateInpu
     `INSERT INTO productos (codigo, sku, nombre, descripcion, categoria_id, precio_sugerido, activo)
      VALUES ($1, $1, $2, $3, $4, $5, $6)
      RETURNING *`,
-    [input.codigo, input.nombre, input.descripcion, input.categoriaId, input.precioVenta, input.activo]
+    [input.codigo || null, input.nombre, input.descripcion, input.categoriaId, input.precioVenta, input.activo]
   );
   await client.query('INSERT INTO inventario (producto_id, existencia, costo_promedio_unitario) VALUES ($1, 0, 0)', [result.rows[0].id]);
   await writeAudit(client, { usuarioId: userId, entidadTipo: 'productos', entidadId: result.rows[0].id, accion: 'CREAR', nuevos: result.rows[0] });
@@ -43,7 +43,9 @@ export async function updateProduct(client: PoolClient, productId: string, input
   const before = await client.query('SELECT * FROM productos WHERE id = $1', [productId]);
   if (!before.rows[0]) throw new AppError(404, 'Producto no encontrado.', 'NOT_FOUND');
   const set = entries.map(([field], index) => `${fieldMap[field]} = $${index + 1}`).join(', ');
-  const result = await client.query(`UPDATE productos SET ${set} WHERE id = $${entries.length + 1} RETURNING *`, [...entries.map(([, value]) => value), productId]);
+  const values = entries.map(([field, value]) => field === 'codigo' ? (value || null) : value);
+  const codeIndex = entries.findIndex(([field]) => field === 'codigo');
+  const result = await client.query(`UPDATE productos SET ${set}${codeIndex >= 0 ? `, sku = $${codeIndex + 1}` : ''} WHERE id = $${entries.length + 1} RETURNING *`, [...values, productId]);
   await writeAudit(client, { usuarioId: userId, entidadTipo: 'productos', entidadId: productId, accion: 'ACTUALIZAR', anteriores: before.rows[0], nuevos: result.rows[0] });
   return result.rows[0];
 }

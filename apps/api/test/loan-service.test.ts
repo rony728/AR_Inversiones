@@ -178,12 +178,13 @@ for (const inherited of [false, true]) test(`edita un préstamo ${inherited ? 'h
   assert.equal(db.calls.some((call) => call.values.includes('EDITAR')), true);
 });
 
-test('edita un préstamo con pagos y aumenta capital solo si el fondo alcanza', async () => {
+test('edita un préstamo con pagos y permite que el fondo quede negativo', async () => {
   const db = flexibleLoanClient({ capital_original: '1200.00', capital_pendiente: '800.00' }, { [flexibleFundA]: 500 });
   await editLoan(db.client as never, 'loan-1', editPayload({ capitalOriginal: 1200, capitalPendiente: 1000, interesPendiente: 150 }), 'user-1');
   assert.equal(db.balances[flexibleFundA], 300);
   const insufficient = flexibleLoanClient({ capital_pendiente: '800.00' }, { [flexibleFundA]: 100 });
-  await assert.rejects(editLoan(insufficient.client as never, 'loan-1', editPayload({ capitalOriginal: 1200, capitalPendiente: 1000 }), 'user-1'), (error: unknown) => (error as { code?: string }).code === 'INSUFFICIENT_CUSTODY_BALANCE');
+  await editLoan(insufficient.client as never, 'loan-1', editPayload({ capitalOriginal: 1200, capitalPendiente: 1000 }), 'user-1');
+  assert.equal(insufficient.balances[flexibleFundA], -100);
 });
 
 test('al cambiar socio devuelve la exposición al fondo anterior y la descuenta del nuevo', async () => {
@@ -194,9 +195,10 @@ test('al cambiar socio devuelve la exposición al fondo anterior y la descuenta 
   assert.equal(db.calls.filter((call) => call.sql.includes('INSERT INTO movimientos_custodia')).length, 2);
 });
 
-test('rechaza cambiar socio cuando el fondo nuevo no alcanza', async () => {
+test('permite cambiar socio aunque el fondo nuevo quede negativo', async () => {
   const db = flexibleLoanClient({}, { [flexibleFundA]: 1000, [flexibleFundB]: 700 });
-  await assert.rejects(editLoan(db.client as never, 'loan-1', editPayload({ socioId: flexiblePartnerB, custodiaId: flexibleFundB }), 'user-1'), (error: unknown) => (error as { code?: string }).code === 'INSUFFICIENT_CUSTODY_BALANCE');
+  await editLoan(db.client as never, 'loan-1', editPayload({ socioId: flexiblePartnerB, custodiaId: flexibleFundB }), 'user-1');
+  assert.equal(db.balances[flexibleFundB], -100);
 });
 
 for (const inherited of [false, true]) test(`elimina lógicamente un préstamo ${inherited ? 'heredado' : 'nuevo'} aunque tenga historial`, async () => {

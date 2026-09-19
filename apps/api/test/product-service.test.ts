@@ -22,6 +22,16 @@ test('crear producto inicia inventario en cero y registra auditoría', async () 
   assert.equal(db.calls.find((call) => call.sql.includes('INSERT INTO auditoria_sistema'))?.values[3], 'CREAR');
 });
 
+test('crea varios productos sin código usando NULL y conserva inventario independiente', async () => {
+  for (const id of ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222']) {
+    const db = fakeClient([{ id, codigo: null, nombre: 'Sin código' }]);
+    await createProduct(db.client, { codigo: null, nombre: 'Sin código', descripcion: null, categoriaId: null, precioVenta: 0, activo: true });
+    const insert = db.calls.find((call) => call.sql.includes('INSERT INTO productos'))!;
+    assert.equal(insert.values[0], null);
+    assert.deepEqual(db.calls.find((call) => call.sql.includes('INSERT INTO inventario'))?.values, [id]);
+  }
+});
+
 test('editar datos descriptivos conserva UUID y nunca actualiza inventario', async () => {
   const id = '11111111-1111-4111-8111-111111111111'; const db = fakeClient([{ id, codigo: 'SKU-1', nombre: 'Nuevo nombre', descripcion: 'Detalle', categoria_id: null, precio_sugerido: 55, activo: false }]);
   const updated = await updateProduct(db.client, id, { nombre: 'Nuevo nombre', descripcion: 'Detalle', categoriaId: null, precioVenta: 55, activo: false });

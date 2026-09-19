@@ -439,3 +439,12 @@ td { color: var(--text-main); }
 @media(max-width:480px) {
   .client-modal .client-form-actions { grid-template-columns: 1fr; }
 }
+
+.nav-group-label { display: block; margin: 18px 16px 6px; color: #8fa1b8; font-size: .68rem; font-weight: 800; letter-spacing: .12em; }
+.loan-due-yellow { background: #fff8d8 !important; }
+.loan-due-orange { background: #ffead2 !important; }
+.loan-due-red { background: #ffe0e0 !important; }
+.finance-category-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-bottom: 18px; }
+.distribution-summary { padding: 12px; border-radius: 12px; background: var(--surface-soft, #f5f7fa); }
+.distribution-summary p { margin: 4px 0; }
+@media (max-width: 899px) { .finance-category-grid { grid-template-columns: 1fr; } }

@@ -27,7 +27,7 @@ export const transferInput = z.object({
 export const fundAdjustmentInput = z.object({
   socioId: uuid,
   custodiaId: uuid,
-  nuevoSaldo: z.coerce.number().min(0),
+  nuevoSaldo: z.coerce.number(),
   motivo: reason
 });
 
@@ -46,7 +46,6 @@ export async function transferBetweenCustodies(client: PoolClient, input: z.infe
   const destination = custodias.get(input.custodiaDestinoId)!;
   if (origin.socio_id !== input.socioOrigenId || destination.socio_id !== input.socioDestinoId) throw new AppError(422, 'Cada fondo debe pertenecer al socio seleccionado.', 'INVALID_CUSTODY');
   const amountCents = toCents(input.monto); const originCents = toCents(Number(origin.saldo_actual)); const destinationCents = toCents(Number(destination.saldo_actual));
-  if (originCents < amountCents) throw new AppError(422, 'El fondo de origen no tiene saldo suficiente.', 'INSUFFICIENT_CUSTODY_BALANCE');
   const transfer = await client.query<{ id: string }>('INSERT INTO transferencias_custodia (socio_id,socio_destino_id,custodia_origen_id,custodia_destino_id,monto,observaciones,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id', [input.socioOrigenId, input.socioDestinoId, origin.id, destination.id, money(amountCents), input.observaciones, userId ?? null]);
   const originAfter = money(originCents - amountCents); const destinationAfter = money(destinationCents + amountCents);
   await client.query('UPDATE custodias SET saldo_actual=CASE WHEN id=$1 THEN $2::numeric WHEN id=$3 THEN $4::numeric END WHERE id IN ($1,$3)', [origin.id, originAfter, destination.id, destinationAfter]);

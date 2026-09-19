@@ -37,7 +37,6 @@ export async function registerPurchase(client: PoolClient, input: PurchaseInput,
   const items = input.items.map((item) => ({ ...item, subtotalCents: toCents(item.cantidad * item.costoUnitario) }));
   const totalCents = items.reduce((sum, item) => sum + item.subtotalCents, 0);
   const balance = await lockProductsCustody(client, input.custodiaId, input.socioId);
-  if (toCents(balance) < totalCents) throw new AppError(422, 'El fondo no tiene saldo suficiente para esta compra.', 'INSUFFICIENT_CUSTODY_BALANCE');
   const purchase = await client.query<{ id: string }>(`INSERT INTO compras (proveedor_id,socio_id,custodia_id,fecha,estado,total,observaciones,created_by) VALUES ($1,$2,$3,$4,'CONFIRMADO',$5,$6,$7) RETURNING id`, [input.proveedorId ?? null, input.socioId, input.custodiaId, input.fecha, money(totalCents), input.observaciones ?? null, userId ?? null]);
   for (const item of items) {
     await lockProduct(client, item.productoId); const prior = await lockInventory(client, item.productoId);

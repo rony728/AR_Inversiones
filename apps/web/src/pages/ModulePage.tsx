@@ -1,6 +1,7 @@
 import { Plus, Search } from 'lucide-react';
 import { formatMoney } from '../lib/api';
 import { useOfflineList } from '../lib/offline-query';
+import { formatDate } from '../lib/date-format';
 
 type Config = { title: string; subtitle: string; resource: string; action: string; columns: Array<[string, string]>; stage?: string };
 const configs: Record<string, Config> = {
@@ -11,7 +12,7 @@ const configs: Record<string, Config> = {
   auditoria: { title: 'Auditoría de inventario', subtitle: 'Compara existencia del sistema contra la física.', resource: '/auditorias', action: 'Iniciar auditoría', columns: [['fecha_inicio', 'Inicio'], ['estado', 'Estado'], ['fecha_aprobacion', 'Aprobación']], stage: 'Los ajustes de inventario se habilitarán en la etapa 10.' }
 };
 
-function value(row: Record<string, unknown>, key: string) { const raw = row[key]; if (key.includes('total') || key.includes('capital') || key === 'monto') return formatMoney(raw as number); if (key === 'activo') return raw ? 'Activo' : 'Inactivo'; return raw ? String(raw).slice(0, 24) : '—'; }
+function value(row: Record<string, unknown>, key: string) { const raw = row[key]; if (key.startsWith('fecha')) return formatDate(raw); if (key.includes('total') || key.includes('capital') || key === 'monto') return formatMoney(raw as number); if (key === 'activo') return raw ? 'Activo' : 'Inactivo'; return raw ? String(raw).slice(0, 24) : '—'; }
 export function ModulePage({ name }: { name: keyof typeof configs }) {
   const config = configs[name]; const store = ({ clientes: 'clientes', compras: 'compras', ventas: 'ventas', prestamos: 'prestamos', auditoria: 'configuracion' } as const)[name] ?? 'configuracion'; const { rows, offline } = useOfflineList(store, config.resource);
   return <><section className="page-title"><div><p className="eyebrow">OPERACIÓN</p><h2>{config.title}</h2><p>{config.subtitle}</p></div><button className="primary"><Plus size={18} /> {config.action}</button></section>{config.stage && <div className="notice">{config.stage}</div>}

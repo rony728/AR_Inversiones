@@ -33,14 +33,14 @@ export function ProductSearchSelect({ products, selectedId, excludedIds, onChang
       role="combobox"
       autoComplete="off"
       placeholder="Buscar por nombre o código…"
-      value={open ? query : selected ? `${selected.nombre} · ${selected.codigo}` : ''}
+      value={open ? query : selected ? `${selected.nombre}${selected.codigo ? ` · ${selected.codigo}` : ''}` : ''}
       onFocus={() => { setOpen(true); setQuery(''); }}
       onBlur={() => window.setTimeout(() => { setOpen(false); setQuery(''); }, 120)}
       onChange={(event) => { setQuery(event.target.value); setOpen(true); }}
     />
     {open && <div className="product-options" id={optionsId} role="listbox">
       {options.length ? options.slice(0, 50).map((product) => <button key={product.id} type="button" role="option" aria-selected={product.id === selectedId} onMouseDown={(event) => event.preventDefault()} onClick={() => choose(product.id)}>
-        <strong>{product.nombre}</strong><small>{product.codigo}{showStock ? ` · ${product.cantidad_disponible} disponibles` : ''}</small>
+        <strong>{product.nombre}</strong><small>{product.codigo ?? 'Sin código'}{showStock ? ` · ${product.cantidad_disponible} disponibles` : ''}</small>
       </button>) : <span>No hay productos disponibles que coincidan.</span>}
     </div>}
   </div>;

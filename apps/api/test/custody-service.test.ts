@@ -51,8 +51,8 @@ test('permite transferir el saldo completo y deja el origen en cero', async () =
   const db = custodyClient({ [alexProducts]: 250 }); await transferBetweenCustodies(db.client as never, transfer(), 'user-1'); assert.equal(db.funds.get(alexProducts)?.saldo_actual, '0.00');
 });
 
-test('rechaza saldo insuficiente y origen igual al destino', async () => {
-  const db = custodyClient({ [alexProducts]: 100 }); await assert.rejects(transferBetweenCustodies(db.client as never, transfer(), 'user-1'), (error: unknown) => (error as { code?: string }).code === 'INSUFFICIENT_CUSTODY_BALANCE');
+test('permite saldo negativo y rechaza origen igual al destino', async () => {
+  const db = custodyClient({ [alexProducts]: 100 }); await transferBetweenCustodies(db.client as never, transfer(), 'user-1'); assert.equal(db.funds.get(alexProducts)?.saldo_actual, '-150.00');
   assert.equal(transferInput.safeParse({ ...transfer(), custodiaDestinoId: alexProducts }).success, false);
 });
 
@@ -66,8 +66,8 @@ for (const [name, current, next, difference] of [['positivo', 3000, 3250, '250.0
   assert.equal(result.diferencia, difference); assert.equal(db.funds.get(alexLoans)?.saldo_actual, Number(next).toFixed(2)); assert.equal(db.calls.some((call) => call.sql.includes('AJUSTE_MANUAL_FONDO')), true); assert.equal(db.calls.some((call) => call.sql.includes('INSERT INTO movimientos_financieros')), false);
 });
 
-test('rechaza saldo negativo, saldo sin cambio y motivo inválido', async () => {
-  assert.equal(fundAdjustmentInput.safeParse({ socioId: alex, custodiaId: alexLoans, nuevoSaldo: -1, motivo: 'Corrección' }).success, false);
+test('acepta saldo negativo y rechaza saldo sin cambio y motivo inválido', async () => {
+  assert.equal(fundAdjustmentInput.safeParse({ socioId: alex, custodiaId: alexLoans, nuevoSaldo: -1, motivo: 'Corrección' }).success, true);
   assert.equal(fundAdjustmentInput.safeParse({ socioId: alex, custodiaId: alexLoans, nuevoSaldo: 10, motivo: 'No' }).success, false);
   const db = custodyClient({ [alexLoans]: 3000 }); await assert.rejects(adjustFundBalance(db.client as never, fundAdjustmentInput.parse({ socioId: alex, custodiaId: alexLoans, nuevoSaldo: 3000, motivo: 'Sin diferencia real' })), (error: unknown) => (error as { code?: string }).code === 'UNCHANGED_CUSTODY_BALANCE');
 });
@@ -80,6 +80,6 @@ test('un préstamo posterior usa el saldo ajustado como única fuente de verdad'
 
 test('un gasto posterior usa el saldo ajustado como única fuente de verdad', async () => {
   const db = custodyClient({ [alexProducts]: 3000 }); await adjustFundBalance(db.client as never, fundAdjustmentInput.parse({ socioId: alex, custodiaId: alexProducts, nuevoSaldo: 3500, motivo: 'Corrección de saldo inicial' }), 'user-1');
-  await registerExpense(db.client as never, { socioId: alex, custodiaId: alexProducts, concepto: 'Gasto operativo verificado', monto: 500, fecha: '2026-09-12' }, 'user-1');
+  await registerExpense(db.client as never, { socioId: alex, custodiaId: alexProducts, rubro: 'PRODUCTOS', concepto: 'Gasto operativo verificado', monto: 500, fecha: '2026-09-12' }, 'user-1');
   assert.equal(db.funds.get(alexProducts)?.saldo_actual, '3000.00');
 });

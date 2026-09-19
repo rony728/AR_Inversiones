@@ -1,100 +1,2071 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { createPortal } from 'react-dom';
-import { CreditCard, Eye, Pencil, Plus, RefreshCw, RotateCcw, Search, X } from 'lucide-react';
-import { api, formatMoney } from '../lib/api';
-import { cacheList, getCachedList, queueMutation } from '../lib/offline-db';
-import { addLoanMonth, effectiveLoanState, filterLoans, loanSummary, paymentEstimate, type LoanRow, type LoanState } from '../lib/loan-management';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
+import {
+  CreditCard,
+  Eye,
+  Pencil,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  X,
+} from "lucide-react";
+import { api, formatMoney } from "../lib/api";
+import { cacheList, getCachedList, queueMutation } from "../lib/offline-db";
+import {
+  addLoanMonth,
+  effectiveLoanState,
+  filterLoans,
+  loanDueAlert,
+  loanSummary,
+  paymentEstimate,
+  type LoanRow,
+  type LoanState,
+} from "../lib/loan-management";
+import { formatDate, formatDateTime } from "../lib/date-format";
 
-type Row = Record<string, unknown>; type Source = 'loading' | 'server' | 'cache' | 'error';
-type Settlement = { capitalPendiente: number; interesesPendientes: number; periodosPendientes: number; pagoMinimo: number; totalMaximo: number; proximaFecha: string; estadoActual: string };
-type Detail = { prestamo: LoanRow; intereses: Row[]; pagos: Row[]; reprogramaciones: Row[]; recuperaciones: Row[]; anulacion: Row | null; auditoria: Row[] };
-type Action = 'reprogramar' | 'incobrable' | 'recuperar' | 'anular' | 'eliminar' | 'revertir-pago' | 'revertir-recuperacion';
-type LoanCorrection = { id: string; clienteId: string; socioId: string; capitalOriginal: string; capitalPendiente: string; interesPendiente: string; tasaMensual: string; fechaDesembolso: string; fechaProximoPago: string; observaciones: string; motivo: string; socioOriginalId: string; custodiaOriginalId: string; exposicionOriginal: number; estado: LoanRow['estado'] };
+type Row = Record<string, unknown>;
+type Source = "loading" | "server" | "cache" | "error";
+type Settlement = {
+  capitalPendiente: number;
+  interesesPendientes: number;
+  periodosPendientes: number;
+  pagoMinimo: number;
+  totalMaximo: number;
+  proximaFecha: string;
+  estadoActual: string;
+};
+type Detail = {
+  prestamo: LoanRow;
+  intereses: Row[];
+  pagos: Row[];
+  reprogramaciones: Row[];
+  recuperaciones: Row[];
+  anulacion: Row | null;
+  auditoria: Row[];
+};
+type Action =
+  | "reprogramar"
+  | "incobrable"
+  | "recuperar"
+  | "anular"
+  | "eliminar"
+  | "revertir-pago"
+  | "revertir-recuperacion";
+type LoanCorrection = {
+  id: string;
+  clienteId: string;
+  socioId: string;
+  capitalOriginal: string;
+  capitalPendiente: string;
+  interesPendiente: string;
+  tasaMensual: string;
+  fechaDesembolso: string;
+  fechaProximoPago: string;
+  observaciones: string;
+  motivo: string;
+  socioOriginalId: string;
+  custodiaOriginalId: string;
+  exposicionOriginal: number;
+  estado: LoanRow["estado"];
+};
 const today = () => new Date().toISOString().slice(0, 10);
-const initialLoan = () => ({ clienteId: '', socioId: '', capital: '', tasaMensual: '15', fechaDesembolso: today(), fechaProximoPago: addLoanMonth(today()), observaciones: '' });
-const states: Array<'TODOS' | LoanState> = ['TODOS', 'ACTIVO', 'VENCIDO', 'PAGADO', 'INCOBRABLE', 'RECUPERADO', 'ANULADO', 'ELIMINADO'];
-const displayDate = (value: unknown) => value ? String(value).slice(0, 10) : 'Sin fecha disponible';
-const displayDateTime = (value: unknown) => value ? new Date(String(value)).toLocaleString('es-HN') : 'Sin fecha disponible';
+const initialLoan = () => ({
+  clienteId: "",
+  socioId: "",
+  capital: "",
+  tasaMensual: "15",
+  fechaDesembolso: today(),
+  fechaProximoPago: addLoanMonth(today()),
+  observaciones: "",
+});
+const states: Array<"TODOS" | LoanState> = [
+  "TODOS",
+  "ACTIVO",
+  "VENCIDO",
+  "PAGADO",
+  "INCOBRABLE",
+  "RECUPERADO",
+  "ANULADO",
+  "ELIMINADO",
+];
+const displayDate = (value: unknown) =>
+  formatDate(value, "Sin fecha disponible");
+const displayDateTime = (value: unknown) =>
+  formatDateTime(value, "Sin fecha disponible");
 
-function SearchPicker({ rows, selectedId, onChange, loanMode = false }: { rows: Row[]; selectedId: string; onChange: (id: string) => void; loanMode?: boolean }) {
-  const [open, setOpen] = useState(false); const [search, setSearch] = useState(''); const selected = rows.find((row) => row.id === selectedId);
-  const options = rows.filter((row) => `${row.cliente ?? row.nombre ?? ''} ${row.capital_pendiente ?? ''}`.toLocaleLowerCase('es-HN').includes(search.trim().toLocaleLowerCase('es-HN')));
-  return <div className="product-combobox loan-picker"><Search size={16} /><input role="combobox" aria-expanded={open} value={open ? search : selected ? String(loanMode ? `${selected.cliente} · ${formatMoney(selected.capital_pendiente as string)}` : selected.nombre) : ''} placeholder={loanMode ? 'Buscar préstamo por cliente…' : 'Buscar cliente activo…'} onFocus={() => { setOpen(true); setSearch(''); }} onBlur={() => setTimeout(() => setOpen(false), 120)} onChange={(event) => { setSearch(event.target.value); setOpen(true); }} />{open && <div className="product-options" role="listbox">{options.slice(0, 50).map((row) => <button type="button" key={String(row.id)} onMouseDown={(event) => event.preventDefault()} onClick={() => { onChange(String(row.id)); setOpen(false); }}><strong>{String(row.cliente ?? row.nombre)}</strong>{loanMode && <small>{formatMoney(row.capital_pendiente as string)} · {formatMoney(row.intereses_pendientes as string)} interés</small>}</button>)}{!options.length && <span>No hay coincidencias.</span>}</div>}</div>;
+function SearchPicker({
+  rows,
+  selectedId,
+  onChange,
+  loanMode = false,
+}: {
+  rows: Row[];
+  selectedId: string;
+  onChange: (id: string) => void;
+  loanMode?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const selected = rows.find((row) => row.id === selectedId);
+  const options = rows.filter((row) =>
+    `${row.cliente ?? row.nombre ?? ""} ${row.capital_pendiente ?? ""}`
+      .toLocaleLowerCase("es-HN")
+      .includes(search.trim().toLocaleLowerCase("es-HN")),
+  );
+  return (
+    <div className="product-combobox loan-picker">
+      <Search size={16} />
+      <input
+        role="combobox"
+        aria-expanded={open}
+        value={
+          open
+            ? search
+            : selected
+              ? String(
+                  loanMode
+                    ? `${selected.cliente} · ${formatMoney(selected.capital_pendiente as string)}`
+                    : selected.nombre,
+                )
+              : ""
+        }
+        placeholder={
+          loanMode ? "Buscar préstamo por cliente…" : "Buscar cliente activo…"
+        }
+        onFocus={() => {
+          setOpen(true);
+          setSearch("");
+        }}
+        onBlur={() => setTimeout(() => setOpen(false), 120)}
+        onChange={(event) => {
+          setSearch(event.target.value);
+          setOpen(true);
+        }}
+      />
+      {open && (
+        <div className="product-options" role="listbox">
+          {options.slice(0, 50).map((row) => (
+            <button
+              type="button"
+              key={String(row.id)}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                onChange(String(row.id));
+                setOpen(false);
+              }}
+            >
+              <strong>{String(row.cliente ?? row.nombre)}</strong>
+              {loanMode && (
+                <small>
+                  {formatMoney(row.capital_pendiente as string)} ·{" "}
+                  {formatMoney(row.intereses_pendientes as string)} interés
+                </small>
+              )}
+            </button>
+          ))}
+          {!options.length && <span>No hay coincidencias.</span>}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function LoansPage() {
-  const [loans, setLoans] = useState<LoanRow[]>([]); const [clients, setClients] = useState<Row[]>([]); const [partners, setPartners] = useState<Row[]>([]); const [historic, setHistoric] = useState<Row[]>([]); const [source, setSource] = useState<Source>('loading');
-  const [search, setSearch] = useState(''); const [state, setState] = useState<'TODOS' | LoanState>('TODOS'); const [partnerFilter, setPartnerFilter] = useState('TODOS'); const [panel, setPanel] = useState<'nuevo' | 'pago' | 'historicos' | 'editar' | null>(null); const [message, setMessage] = useState(''); const [error, setError] = useState(''); const [processing, setProcessing] = useState(false); const processingRef = useRef(false);
-  const [loanForm, setLoanForm] = useState(initialLoan); const [nextDateManual, setNextDateManual] = useState(false); const [payment, setPayment] = useState({ prestamoId: '', monto: '', fechaPago: today() }); const [settlement, setSettlement] = useState<Settlement | null>(null);
-  const [detail, setDetail] = useState<Detail | null>(null); const [detailId, setDetailId] = useState(''); const [action, setAction] = useState<{ type: Action; targetId?: string } | null>(null); const [actionForm, setActionForm] = useState({ fecha: today(), fechaProximoPago: '', monto: '', motivo: '', observaciones: '' });
+  const [loans, setLoans] = useState<LoanRow[]>([]);
+  const [clients, setClients] = useState<Row[]>([]);
+  const [partners, setPartners] = useState<Row[]>([]);
+  const [historic, setHistoric] = useState<Row[]>([]);
+  const [source, setSource] = useState<Source>("loading");
+  const [search, setSearch] = useState("");
+  const [state, setState] = useState<"TODOS" | LoanState>("TODOS");
+  const [partnerFilter, setPartnerFilter] = useState("TODOS");
+  const [panel, setPanel] = useState<
+    "nuevo" | "pago" | "historicos" | "editar" | null
+  >(null);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [processing, setProcessing] = useState(false);
+  const processingRef = useRef(false);
+  const [loanForm, setLoanForm] = useState(initialLoan);
+  const [nextDateManual, setNextDateManual] = useState(false);
+  const [payment, setPayment] = useState({
+    prestamoId: "",
+    monto: "",
+    montoExtra: "",
+    fechaPago: today(),
+  });
+  const [settlement, setSettlement] = useState<Settlement | null>(null);
+  const [detail, setDetail] = useState<Detail | null>(null);
+  const [detailId, setDetailId] = useState("");
+  const [action, setAction] = useState<{
+    type: Action;
+    targetId?: string;
+  } | null>(null);
+  const [actionForm, setActionForm] = useState({
+    fecha: today(),
+    fechaProximoPago: "",
+    monto: "",
+    motivo: "",
+    observaciones: "",
+  });
   const [correction, setCorrection] = useState<LoanCorrection | null>(null);
-  const loanModalOpen = Boolean(detail || (panel === 'editar' && correction));
+  const loanModalOpen = Boolean(detail || (panel === "editar" && correction));
 
-  async function load() { setSource('loading'); setError(''); try { const [loanResult, clientResult, partnerResult] = await Promise.all([api<{ data: LoanRow[] }>('/prestamos'), api<{ data: Row[] }>('/catalogo/clientes'), api<{ data: Row[] }>('/catalogo/socios')]); setLoans(loanResult.data); setClients(clientResult.data); setPartners(partnerResult.data); await cacheList('prestamos', loanResult.data as unknown as Row[]); await cacheList('clientes', clientResult.data); await cacheList('custodias', partnerResult.data); setSource('server'); } catch { const cached = await getCachedList('prestamos') as unknown as LoanRow[]; setLoans(cached); setClients(await getCachedList('clientes')); setPartners(await getCachedList('custodias')); setSource(cached.length ? 'cache' : 'error'); } }
-  useEffect(() => { void load(); }, []);
-  useEffect(() => { if (!loanModalOpen) return; const scrollX = window.scrollX; const scrollY = window.scrollY; const overflow = document.body.style.overflow; const paddingRight = document.body.style.paddingRight; const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth; document.body.style.overflow = 'hidden'; if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`; return () => { document.body.style.overflow = overflow; document.body.style.paddingRight = paddingRight; window.scrollTo(scrollX, scrollY); }; }, [loanModalOpen]);
-  useEffect(() => { if (!payment.prestamoId) { setSettlement(null); return; } if (source !== 'server') { const loan = loans.find((row) => row.id === payment.prestamoId); setSettlement(loan ? { capitalPendiente: Number(loan.capital_pendiente), interesesPendientes: Number(loan.intereses_pendientes), periodosPendientes: Number(loan.periodos_pendientes), pagoMinimo: Number(loan.intereses_pendientes), totalMaximo: Number(loan.total_adeudado), proximaFecha: loan.fecha_proximo_pago, estadoActual: loan.estado } : null); return; } const timer = setTimeout(() => { void api<{ data: Settlement }>(`/prestamos/${payment.prestamoId}/liquidacion?fechaPago=${payment.fechaPago}`).then((result) => setSettlement(result.data)).catch((reason) => setError(reason instanceof Error ? reason.message : 'No se pudo calcular la liquidación.')); }, 250); return () => clearTimeout(timer); }, [loans, payment.fechaPago, payment.prestamoId, source]);
-  const loanPartners = useMemo(() => [...new Set(loans.map((loan) => loan.socio).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es-HN')), [loans]);
-  const filtered = useMemo(() => filterLoans(loans, search, state).filter((loan) => partnerFilter === 'TODOS' || loan.socio === partnerFilter), [loans, partnerFilter, search, state]); const summary = useMemo(() => loanSummary(loans), [loans]); const activeClients = clients.filter((client) => client.activo !== false); const payable = loans.filter((loan) => !loan.eliminado_at && ['ACTIVO', 'VENCIDO'].includes(loan.estado));
-  const selectedPartner = partners.find((partner) => partner.id === loanForm.socioId); const fund = ((selectedPartner?.custodias as Row[] | undefined) ?? []).find((item) => item.actividad === 'PRESTAMOS'); const fundBalance = Number(fund?.saldo_actual ?? 0); const capital = Number(loanForm.capital || 0); const estimate = settlement ? paymentEstimate(settlement.capitalPendiente, settlement.interesesPendientes, Number(payment.monto || 0)) : null;
-  const selectedPaymentLoan = payable.find((loan) => loan.id === payment.prestamoId);
-  const availableLoanFunds = partners.flatMap((partner) => { const loansFund = ((partner.custodias as Row[] | undefined) ?? []).find((item) => item.actividad === 'PRESTAMOS'); return loansFund ? [{ partnerId: String(partner.id), partnerName: String(partner.nombre), balance: Number(loansFund.saldo_actual) }] : []; });
-  const correctionPartner = partners.find((partner) => partner.id === correction?.socioId); const correctionFund = (((correctionPartner?.custodias as Row[] | undefined) ?? []).find((item) => item.actividad === 'PRESTAMOS')) as (Row & { id: string; saldo_actual: string | number }) | undefined; const correctionPending = Number(correction?.capitalPendiente || 0); const correctionDesiredExposure = correction?.estado === 'ANULADO' ? 0 : correctionPending; const correctionSameFund = correction?.custodiaOriginalId === correctionFund?.id && correction?.socioOriginalId === correction?.socioId; const correctionFundAfter = Number(correctionFund?.saldo_actual ?? 0) + (correctionSameFund ? Number(correction?.exposicionOriginal ?? 0) : 0) - correctionDesiredExposure; const correctionInsufficient = Boolean(correctionFund) && correctionFundAfter < 0;
-  async function refresh(openId = detailId) { await load(); if (openId && navigator.onLine) await openDetail(openId); }
-  async function run(work: () => Promise<void>) { if (processingRef.current) return; processingRef.current = true; setProcessing(true); setError(''); try { await work(); } catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo completar la operación.'); } finally { processingRef.current = false; setProcessing(false); } }
+  async function load() {
+    setSource("loading");
+    setError("");
+    try {
+      const [loanResult, clientResult, partnerResult] = await Promise.all([
+        api<{ data: LoanRow[] }>("/prestamos"),
+        api<{ data: Row[] }>("/catalogo/clientes"),
+        api<{ data: Row[] }>("/catalogo/socios"),
+      ]);
+      setLoans(loanResult.data);
+      setClients(clientResult.data);
+      setPartners(partnerResult.data);
+      await cacheList("prestamos", loanResult.data as unknown as Row[]);
+      await cacheList("clientes", clientResult.data);
+      await cacheList("custodias", partnerResult.data);
+      setSource("server");
+    } catch {
+      const cached = (await getCachedList("prestamos")) as unknown as LoanRow[];
+      setLoans(cached);
+      setClients(await getCachedList("clientes"));
+      setPartners(await getCachedList("custodias"));
+      setSource(cached.length ? "cache" : "error");
+    }
+  }
+  useEffect(() => {
+    void load();
+  }, []);
+  useEffect(() => {
+    if (!loanModalOpen) return;
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
+    const overflow = document.body.style.overflow;
+    const paddingRight = document.body.style.paddingRight;
+    const scrollbarWidth =
+      window.innerWidth - document.documentElement.clientWidth;
+    document.body.style.overflow = "hidden";
+    if (scrollbarWidth > 0)
+      document.body.style.paddingRight = `${scrollbarWidth}px`;
+    return () => {
+      document.body.style.overflow = overflow;
+      document.body.style.paddingRight = paddingRight;
+      window.scrollTo(scrollX, scrollY);
+    };
+  }, [loanModalOpen]);
+  useEffect(() => {
+    if (!payment.prestamoId) {
+      setSettlement(null);
+      return;
+    }
+    if (source !== "server") {
+      const loan = loans.find((row) => row.id === payment.prestamoId);
+      setSettlement(
+        loan
+          ? {
+              capitalPendiente: Number(loan.capital_pendiente),
+              interesesPendientes: Number(loan.intereses_pendientes),
+              periodosPendientes: Number(loan.periodos_pendientes),
+              pagoMinimo: Number(loan.intereses_pendientes),
+              totalMaximo: Number(loan.total_adeudado),
+              proximaFecha: loan.fecha_proximo_pago,
+              estadoActual: loan.estado,
+            }
+          : null,
+      );
+      return;
+    }
+    const timer = setTimeout(() => {
+      void api<{ data: Settlement }>(
+        `/prestamos/${payment.prestamoId}/liquidacion?fechaPago=${payment.fechaPago}`,
+      )
+        .then((result) => setSettlement(result.data))
+        .catch((reason) =>
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : "No se pudo calcular la liquidación.",
+          ),
+        );
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [loans, payment.fechaPago, payment.prestamoId, source]);
+  const loanPartners = useMemo(
+    () =>
+      [...new Set(loans.map((loan) => loan.socio).filter(Boolean))].sort(
+        (a, b) => a.localeCompare(b, "es-HN"),
+      ),
+    [loans],
+  );
+  const filtered = useMemo(
+    () =>
+      filterLoans(loans, search, state).filter(
+        (loan) => partnerFilter === "TODOS" || loan.socio === partnerFilter,
+      ),
+    [loans, partnerFilter, search, state],
+  );
+  const summary = useMemo(() => loanSummary(loans), [loans]);
+  const activeClients = clients.filter((client) => client.activo !== false);
+  const payable = loans.filter(
+    (loan) => !loan.eliminado_at && ["ACTIVO", "VENCIDO"].includes(loan.estado),
+  );
+  const selectedPartner = partners.find(
+    (partner) => partner.id === loanForm.socioId,
+  );
+  const fund = ((selectedPartner?.custodias as Row[] | undefined) ?? []).find(
+    (item) => item.actividad === "PRESTAMOS",
+  );
+  const fundBalance = Number(fund?.saldo_actual ?? 0);
+  const capital = Number(loanForm.capital || 0);
+  const estimate = settlement
+    ? paymentEstimate(
+        settlement.capitalPendiente,
+        settlement.interesesPendientes,
+        Number(payment.monto || 0),
+      )
+    : null;
+  const selectedPaymentLoan = payable.find(
+    (loan) => loan.id === payment.prestamoId,
+  );
+  const availableLoanFunds = partners.flatMap((partner) => {
+    const loansFund = ((partner.custodias as Row[] | undefined) ?? []).find(
+      (item) => item.actividad === "PRESTAMOS",
+    );
+    return loansFund
+      ? [
+          {
+            partnerId: String(partner.id),
+            partnerName: String(partner.nombre),
+            balance: Number(loansFund.saldo_actual),
+          },
+        ]
+      : [];
+  });
+  const correctionPartner = partners.find(
+    (partner) => partner.id === correction?.socioId,
+  );
+  const correctionFund = (
+    (correctionPartner?.custodias as Row[] | undefined) ?? []
+  ).find((item) => item.actividad === "PRESTAMOS") as
+    (Row & { id: string; saldo_actual: string | number }) | undefined;
+  const correctionPending = Number(correction?.capitalPendiente || 0);
+  const correctionDesiredExposure =
+    correction?.estado === "ANULADO" ? 0 : correctionPending;
+  const correctionSameFund =
+    correction?.custodiaOriginalId === correctionFund?.id &&
+    correction?.socioOriginalId === correction?.socioId;
+  const correctionFundAfter =
+    Number(correctionFund?.saldo_actual ?? 0) +
+    (correctionSameFund ? Number(correction?.exposicionOriginal ?? 0) : 0) -
+    correctionDesiredExposure;
+  const correctionInsufficient =
+    Boolean(correctionFund) && correctionFundAfter < 0;
+  async function refresh(openId = detailId) {
+    await load();
+    if (openId && navigator.onLine) await openDetail(openId);
+  }
+  async function run(work: () => Promise<void>) {
+    if (processingRef.current) return;
+    processingRef.current = true;
+    setProcessing(true);
+    setError("");
+    try {
+      await work();
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "No se pudo completar la operación.",
+      );
+    } finally {
+      processingRef.current = false;
+      setProcessing(false);
+    }
+  }
 
-  async function create(event: FormEvent) { event.preventDefault(); if (!fund?.id || !loanForm.clienteId || capital <= 0 || loanForm.fechaProximoPago < loanForm.fechaDesembolso || capital > fundBalance) { setError('Revisa cliente, fondo, capital y fechas antes de desembolsar.'); return; } await run(async () => { const payload = { ...loanForm, custodiaId: fund.id, capital, tasaMensual: Number(loanForm.tasaMensual), observaciones: loanForm.observaciones.trim() || undefined }; if (navigator.onLine) { await api('/prestamos', { method: 'POST', body: JSON.stringify(payload) }); setMessage('Préstamo desembolsado correctamente.'); await refresh(''); } else { await queueMutation('prestamos', 'prestamo', crypto.randomUUID(), 'CREATE', payload); setMessage('Préstamo guardado pendiente de sincronización; aún no está confirmado por el servidor.'); } setLoanForm(initialLoan()); setNextDateManual(false); setPanel(null); }); }
-  async function pay(event: FormEvent) { event.preventDefault(); if (!estimate?.valid || !payment.prestamoId) { setError('El pago debe cubrir el mínimo y no exceder el total adeudado.'); return; } await run(async () => { const payload = { prestamoId: payment.prestamoId, fechaPago: payment.fechaPago, monto: Number(payment.monto) }; if (navigator.onLine) { const result = await api<{ data: { interes: string; capital: string; capitalRestante: string; estado: string } }>(`/prestamos/${payment.prestamoId}/pagos`, { method: 'POST', body: JSON.stringify({ fechaPago: payload.fechaPago, monto: payload.monto }) }); setMessage(`Pago aplicado: ${formatMoney(result.data.interes)} a interés y ${formatMoney(result.data.capital)} a capital. Saldo: ${formatMoney(result.data.capitalRestante)}. Estado: ${result.data.estado}.`); await refresh(payment.prestamoId); } else { await queueMutation('pagosPrestamo', 'pago_prestamo', crypto.randomUUID(), 'CREATE', payload); setMessage('Pago guardado pendiente de sincronización; aún no está confirmado por el servidor.'); } setPayment({ prestamoId: '', monto: '', fechaPago: today() }); setPanel(null); }); }
-  async function openDetail(id: string) { setDetailId(id); setError(''); try { setDetail((await api<{ data: Detail }>(`/prestamos/${id}`)).data); } catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo cargar el detalle.'); } }
-  async function loadHistoric() { setPanel('historicos'); if (historic.length || source !== 'server') return; try { setHistoric((await api<{ data: Row[] }>('/prestamos/pagos-historicos')).data); } catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudieron cargar los pagos históricos.'); } }
-  function beginCorrection(loan: LoanRow) { const exposure = ['INCOBRABLE', 'RECUPERADO'].includes(loan.estado) ? Number(loan.saldo_incobrable ?? 0) : ['ACTIVO', 'VENCIDO'].includes(loan.estado) ? Number(loan.capital_pendiente) : 0; setCorrection({ id: loan.id, clienteId: loan.cliente_id, socioId: loan.socio_id, capitalOriginal: String(loan.capital_original), capitalPendiente: String(loan.estado === 'INCOBRABLE' || loan.estado === 'RECUPERADO' ? loan.saldo_incobrable ?? 0 : loan.capital_pendiente), interesPendiente: String(loan.intereses_pendientes), tasaMensual: String(loan.tasa_mensual), fechaDesembolso: loan.fecha_desembolso?.slice(0, 10) ?? '', fechaProximoPago: loan.fecha_proximo_pago.slice(0, 10), observaciones: loan.observaciones ?? '', motivo: '', socioOriginalId: loan.socio_id, custodiaOriginalId: loan.custodia_id, exposicionOriginal: exposure, estado: loan.estado }); setDetail(null); setPanel('editar'); setError(''); setMessage(''); }
-  async function submitCorrection(event: FormEvent) { event.preventDefault(); if (!correction) return; const original = Number(correction.capitalOriginal); const pending = Number(correction.capitalPendiente); if (!correctionFund?.id || !correction.clienteId || original <= 0 || pending < 0 || pending > original || !correction.fechaProximoPago || correctionInsufficient || (correction.fechaDesembolso && correction.fechaProximoPago < correction.fechaDesembolso)) { setError('Revisa cliente, fondo, capitales y fechas antes de guardar.'); return; } if (!window.confirm('¿Confirmas la edición? El sistema ajustará automáticamente el fondo PRESTAMOS y conservará el historial.')) return; await run(async () => { await api(`/prestamos/${correction.id}`, { method: 'PATCH', body: JSON.stringify({ clienteId: correction.clienteId, socioId: correction.socioId, custodiaId: correctionFund.id, capitalOriginal: original, capitalPendiente: pending, interesPendiente: Number(correction.interesPendiente), tasaMensual: Number(correction.tasaMensual), fechaDesembolso: correction.fechaDesembolso || null, fechaProximoPago: correction.fechaProximoPago, observaciones: correction.observaciones.trim() || null, motivo: correction.motivo }) }); setMessage('Préstamo editado y registrado en auditoría.'); setCorrection(null); setPanel(null); await refresh(''); }); }
-  function beginPayment(loan: LoanRow) { setDetail(null); setPayment({ prestamoId: loan.id, monto: '', fechaPago: today() }); setPanel('pago'); setError(''); }
-  function beginAction(type: Action, targetId?: string) { setAction({ type, targetId }); setActionForm({ fecha: today(), fechaProximoPago: type === 'reprogramar' ? String(detail?.prestamo.fecha_proximo_pago ?? '') : '', monto: '', motivo: '', observaciones: '' }); }
-  async function submitAction(event: FormEvent) { event.preventDefault(); if (!detail || !action) return; const names: Record<Action, string> = { reprogramar: 'reprogramación', incobrable: 'declaración de incobrable', recuperar: 'recuperación', anular: 'anulación', eliminar: 'eliminación lógica', 'revertir-pago': 'reversión del pago', 'revertir-recuperacion': 'reversión de la recuperación' }; const confirmation = action.type === 'eliminar' ? '¿Confirmas que deseas retirar este préstamo de la cartera? El registro se conservará en Eliminados para auditoría.' : `¿Confirmas la ${names[action.type]}?`; if (!window.confirm(confirmation)) return; await run(async () => { const base = `/prestamos/${detail.prestamo.id}`; let path = ''; let method = 'POST'; let payload: Row = {};
-    if (action.type === 'reprogramar') { path = '/fecha-proximo-pago'; method = 'PATCH'; payload = { fechaProximoPago: actionForm.fechaProximoPago, motivo: actionForm.motivo }; }
-    if (action.type === 'incobrable') { path = '/incobrable'; payload = { fecha: actionForm.fecha, motivo: actionForm.motivo }; }
-    if (action.type === 'recuperar') { path = '/recuperaciones'; payload = { fecha: actionForm.fecha, monto: Number(actionForm.monto), observaciones: actionForm.observaciones || undefined }; }
-    if (action.type === 'anular') { path = '/anular'; payload = { fecha: actionForm.fecha, motivo: actionForm.motivo }; }
-    if (action.type === 'eliminar') { path = '/eliminar'; payload = { motivo: actionForm.motivo }; }
-    if (action.type === 'revertir-pago') { path = `/pagos/${action.targetId}/revertir`; payload = { motivo: actionForm.motivo }; }
-    if (action.type === 'revertir-recuperacion') { path = `/recuperaciones/${action.targetId}/revertir`; payload = { motivo: actionForm.motivo }; }
-    await api(`${base}${path}`, { method, body: JSON.stringify(payload) }); setMessage(`${names[action.type][0].toUpperCase()}${names[action.type].slice(1)} registrada correctamente.`); setAction(null); await refresh(detail.prestamo.id); }); }
+  async function create(event: FormEvent) {
+    event.preventDefault();
+    if (
+      !fund?.id ||
+      !loanForm.clienteId ||
+      capital <= 0 ||
+      loanForm.fechaProximoPago < loanForm.fechaDesembolso
+    ) {
+      setError("Revisa cliente, fondo, capital y fechas antes de desembolsar.");
+      return;
+    }
+    await run(async () => {
+      const payload = {
+        ...loanForm,
+        custodiaId: fund.id,
+        capital,
+        tasaMensual: Number(loanForm.tasaMensual),
+        observaciones: loanForm.observaciones.trim() || undefined,
+      };
+      if (navigator.onLine) {
+        await api("/prestamos", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        setMessage("Préstamo desembolsado correctamente.");
+        await refresh("");
+      } else {
+        await queueMutation(
+          "prestamos",
+          "prestamo",
+          crypto.randomUUID(),
+          "CREATE",
+          payload,
+        );
+        setMessage(
+          "Préstamo guardado pendiente de sincronización; aún no está confirmado por el servidor.",
+        );
+      }
+      setLoanForm(initialLoan());
+      setNextDateManual(false);
+      setPanel(null);
+    });
+  }
+  async function pay(event: FormEvent) {
+    event.preventDefault();
+    if (
+      !estimate?.valid ||
+      !payment.prestamoId ||
+      Number(payment.montoExtra) < 0
+    ) {
+      setError(
+        "El pago debe cubrir el mínimo, no exceder el total adeudado y el extra no puede ser negativo.",
+      );
+      return;
+    }
+    await run(async () => {
+      const payload = {
+        prestamoId: payment.prestamoId,
+        fechaPago: payment.fechaPago,
+        monto: Number(payment.monto),
+        montoExtra: Number(payment.montoExtra || 0),
+      };
+      if (navigator.onLine) {
+        const result = await api<{
+          data: {
+            interes: string;
+            capital: string;
+            montoExtra: string;
+            totalRecibido: string;
+            capitalRestante: string;
+            estado: string;
+          };
+        }>(`/prestamos/${payment.prestamoId}/pagos`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        setMessage(
+          `Pago aplicado: ${formatMoney(result.data.interes)} a interés, ${formatMoney(result.data.capital)} a capital y ${formatMoney(result.data.montoExtra)} extra. Total recibido: ${formatMoney(result.data.totalRecibido)}.`,
+        );
+        await refresh(payment.prestamoId);
+      } else {
+        await queueMutation(
+          "pagosPrestamo",
+          "pago_prestamo",
+          crypto.randomUUID(),
+          "CREATE",
+          payload,
+        );
+        setMessage(
+          "Pago guardado pendiente de sincronización; aún no está confirmado por el servidor.",
+        );
+      }
+      setPayment({
+        prestamoId: "",
+        monto: "",
+        montoExtra: "",
+        fechaPago: today(),
+      });
+      setPanel(null);
+    });
+  }
+  async function openDetail(id: string) {
+    setDetailId(id);
+    setError("");
+    try {
+      setDetail((await api<{ data: Detail }>(`/prestamos/${id}`)).data);
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "No se pudo cargar el detalle.",
+      );
+    }
+  }
+  async function loadHistoric() {
+    setPanel("historicos");
+    if (historic.length || source !== "server") return;
+    try {
+      setHistoric(
+        (await api<{ data: Row[] }>("/prestamos/pagos-historicos")).data,
+      );
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "No se pudieron cargar los pagos históricos.",
+      );
+    }
+  }
+  function beginCorrection(loan: LoanRow) {
+    const exposure = ["INCOBRABLE", "RECUPERADO"].includes(loan.estado)
+      ? Number(loan.saldo_incobrable ?? 0)
+      : ["ACTIVO", "VENCIDO"].includes(loan.estado)
+        ? Number(loan.capital_pendiente)
+        : 0;
+    setCorrection({
+      id: loan.id,
+      clienteId: loan.cliente_id,
+      socioId: loan.socio_id,
+      capitalOriginal: String(loan.capital_original),
+      capitalPendiente: String(
+        loan.estado === "INCOBRABLE" || loan.estado === "RECUPERADO"
+          ? (loan.saldo_incobrable ?? 0)
+          : loan.capital_pendiente,
+      ),
+      interesPendiente: String(loan.intereses_pendientes),
+      tasaMensual: String(loan.tasa_mensual),
+      fechaDesembolso: loan.fecha_desembolso?.slice(0, 10) ?? "",
+      fechaProximoPago: loan.fecha_proximo_pago.slice(0, 10),
+      observaciones: loan.observaciones ?? "",
+      motivo: "",
+      socioOriginalId: loan.socio_id,
+      custodiaOriginalId: loan.custodia_id,
+      exposicionOriginal: exposure,
+      estado: loan.estado,
+    });
+    setDetail(null);
+    setPanel("editar");
+    setError("");
+    setMessage("");
+  }
+  async function submitCorrection(event: FormEvent) {
+    event.preventDefault();
+    if (!correction) return;
+    const original = Number(correction.capitalOriginal);
+    const pending = Number(correction.capitalPendiente);
+    if (
+      !correctionFund?.id ||
+      !correction.clienteId ||
+      original <= 0 ||
+      pending < 0 ||
+      pending > original ||
+      !correction.fechaProximoPago ||
+      (correction.fechaDesembolso &&
+        correction.fechaProximoPago < correction.fechaDesembolso)
+    ) {
+      setError("Revisa cliente, fondo, capitales y fechas antes de guardar.");
+      return;
+    }
+    if (
+      !window.confirm(
+        "¿Confirmas la edición? El sistema ajustará automáticamente el fondo PRESTAMOS y conservará el historial.",
+      )
+    )
+      return;
+    await run(async () => {
+      await api(`/prestamos/${correction.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          clienteId: correction.clienteId,
+          socioId: correction.socioId,
+          custodiaId: correctionFund.id,
+          capitalOriginal: original,
+          capitalPendiente: pending,
+          interesPendiente: Number(correction.interesPendiente),
+          tasaMensual: Number(correction.tasaMensual),
+          fechaDesembolso: correction.fechaDesembolso || null,
+          fechaProximoPago: correction.fechaProximoPago,
+          observaciones: correction.observaciones.trim() || null,
+          motivo: correction.motivo,
+        }),
+      });
+      setMessage("Préstamo editado y registrado en auditoría.");
+      setCorrection(null);
+      setPanel(null);
+      await refresh("");
+    });
+  }
+  function beginPayment(loan: LoanRow) {
+    setDetail(null);
+    setPayment({
+      prestamoId: loan.id,
+      monto: "",
+      montoExtra: "",
+      fechaPago: today(),
+    });
+    setPanel("pago");
+    setError("");
+  }
+  function beginAction(type: Action, targetId?: string) {
+    setAction({ type, targetId });
+    setActionForm({
+      fecha: today(),
+      fechaProximoPago:
+        type === "reprogramar"
+          ? String(detail?.prestamo.fecha_proximo_pago ?? "")
+          : "",
+      monto: "",
+      motivo: "",
+      observaciones: "",
+    });
+  }
+  async function submitAction(event: FormEvent) {
+    event.preventDefault();
+    if (!detail || !action) return;
+    const names: Record<Action, string> = {
+      reprogramar: "reprogramación",
+      incobrable: "declaración de incobrable",
+      recuperar: "recuperación",
+      anular: "anulación",
+      eliminar: "eliminación lógica",
+      "revertir-pago": "reversión del pago",
+      "revertir-recuperacion": "reversión de la recuperación",
+    };
+    const confirmation =
+      action.type === "eliminar"
+        ? "¿Confirmas que deseas retirar este préstamo de la cartera? El registro se conservará en Eliminados para auditoría."
+        : `¿Confirmas la ${names[action.type]}?`;
+    if (!window.confirm(confirmation)) return;
+    await run(async () => {
+      const base = `/prestamos/${detail.prestamo.id}`;
+      let path = "";
+      let method = "POST";
+      let payload: Row = {};
+      if (action.type === "reprogramar") {
+        path = "/fecha-proximo-pago";
+        method = "PATCH";
+        payload = {
+          fechaProximoPago: actionForm.fechaProximoPago,
+          motivo: actionForm.motivo,
+        };
+      }
+      if (action.type === "incobrable") {
+        path = "/incobrable";
+        payload = { fecha: actionForm.fecha, motivo: actionForm.motivo };
+      }
+      if (action.type === "recuperar") {
+        path = "/recuperaciones";
+        payload = {
+          fecha: actionForm.fecha,
+          monto: Number(actionForm.monto),
+          observaciones: actionForm.observaciones || undefined,
+        };
+      }
+      if (action.type === "anular") {
+        path = "/anular";
+        payload = { fecha: actionForm.fecha, motivo: actionForm.motivo };
+      }
+      if (action.type === "eliminar") {
+        path = "/eliminar";
+        payload = { motivo: actionForm.motivo };
+      }
+      if (action.type === "revertir-pago") {
+        path = `/pagos/${action.targetId}/revertir`;
+        payload = { motivo: actionForm.motivo };
+      }
+      if (action.type === "revertir-recuperacion") {
+        path = `/recuperaciones/${action.targetId}/revertir`;
+        payload = { motivo: actionForm.motivo };
+      }
+      await api(`${base}${path}`, { method, body: JSON.stringify(payload) });
+      setMessage(
+        `${names[action.type][0].toUpperCase()}${names[action.type].slice(1)} registrada correctamente.`,
+      );
+      setAction(null);
+      await refresh(detail.prestamo.id);
+    });
+  }
 
-  return <>
-    <section className="page-title loans-title"><div><p className="eyebrow">CRÉDITO</p><h2>Préstamos</h2><p>Capital, intereses mensuales, pagos y recuperaciones.</p></div><div className="quick-actions"><button className="secondary" disabled={source !== 'server'} onClick={() => void loadHistoric()}>Pagos históricos</button><button className="secondary" disabled={source === 'error'} onClick={() => setPanel('pago')}><CreditCard size={16} /> Registrar pago</button><button className="primary" disabled={source === 'error' || (source !== 'server' && navigator.onLine)} onClick={() => setPanel('nuevo')}><Plus size={17} /> Nuevo préstamo</button></div></section>
-    {source === 'cache' && <div className="offline-banner">Mostrando la última copia del dispositivo. Las acciones controladas requieren la API. <button className="text-button" onClick={() => void load()}>Reintentar</button></div>}{source === 'error' && <div className="client-load-error">No se pudo cargar la cartera ni existe copia local.<button className="secondary" onClick={() => void load()}><RefreshCw size={15} /> Reintentar</button></div>}
-    {message && <p className="form-message loan-message">{message}<button onClick={() => setMessage('')}><X size={15} /></button></p>}{error && !loanModalOpen && <p className="purchase-warning">{error}</p>}
-    <div className="loan-summary metrics"><article className="metric"><div><span>Activos</span><strong>{summary.activos}</strong></div></article><article className="metric orange"><div><span>Vencidos</span><strong>{summary.vencidos}</strong></div></article><article className="metric"><div><span>Capital activo</span><strong>{formatMoney(summary.capitalActivo)}</strong></div></article><article className="metric"><div><span>Intereses pendientes</span><strong>{formatMoney(summary.intereses)}</strong></div></article><article className="metric orange"><div><span>Incobrables</span><strong>{summary.incobrables}</strong></div></article><article className="metric orange"><div><span>Capital incobrable</span><strong>{formatMoney(summary.capitalIncobrable)}</strong></div></article><article className="metric green"><div><span>Recuperados</span><strong>{summary.recuperados}</strong></div></article></div>
+  return (
+    <>
+      <section className="page-title loans-title">
+        <div>
+          <p className="eyebrow">CRÉDITO</p>
+          <h2>Préstamos</h2>
+          <p>Capital, intereses mensuales, pagos y recuperaciones.</p>
+        </div>
+        <div className="quick-actions">
+          <button
+            className="secondary"
+            disabled={source !== "server"}
+            onClick={() => void loadHistoric()}
+          >
+            Pagos históricos
+          </button>
+          <button
+            className="secondary"
+            disabled={source === "error"}
+            onClick={() => setPanel("pago")}
+          >
+            <CreditCard size={16} /> Registrar pago
+          </button>
+          <button
+            className="primary"
+            disabled={
+              source === "error" || (source !== "server" && navigator.onLine)
+            }
+            onClick={() => setPanel("nuevo")}
+          >
+            <Plus size={17} /> Nuevo préstamo
+          </button>
+        </div>
+      </section>
+      {source === "cache" && (
+        <div className="offline-banner">
+          Mostrando la última copia del dispositivo. Las acciones controladas
+          requieren la API.{" "}
+          <button className="text-button" onClick={() => void load()}>
+            Reintentar
+          </button>
+        </div>
+      )}
+      {source === "error" && (
+        <div className="client-load-error">
+          No se pudo cargar la cartera ni existe copia local.
+          <button className="secondary" onClick={() => void load()}>
+            <RefreshCw size={15} /> Reintentar
+          </button>
+        </div>
+      )}
+      {message && (
+        <p className="form-message loan-message">
+          {message}
+          <button onClick={() => setMessage("")}>
+            <X size={15} />
+          </button>
+        </p>
+      )}
+      {error && !loanModalOpen && <p className="purchase-warning">{error}</p>}
+      <div className="loan-summary metrics">
+        <article className="metric">
+          <div>
+            <span>Activos</span>
+            <strong>{summary.activos}</strong>
+          </div>
+        </article>
+        <article className="metric orange">
+          <div>
+            <span>Vencidos</span>
+            <strong>{summary.vencidos}</strong>
+          </div>
+        </article>
+        <article className="metric">
+          <div>
+            <span>Capital activo</span>
+            <strong>{formatMoney(summary.capitalActivo)}</strong>
+          </div>
+        </article>
+        <article className="metric">
+          <div>
+            <span>Intereses pendientes</span>
+            <strong>{formatMoney(summary.intereses)}</strong>
+          </div>
+        </article>
+        <article className="metric orange">
+          <div>
+            <span>Incobrables</span>
+            <strong>{summary.incobrables}</strong>
+          </div>
+        </article>
+        <article className="metric orange">
+          <div>
+            <span>Capital incobrable</span>
+            <strong>{formatMoney(summary.capitalIncobrable)}</strong>
+          </div>
+        </article>
+        <article className="metric green">
+          <div>
+            <span>Recuperados</span>
+            <strong>{summary.recuperados}</strong>
+          </div>
+        </article>
+      </div>
 
-    {panel === 'nuevo' && <form className="panel loan-operation-form" onSubmit={create}><PanelHead title="Nuevo préstamo" close={() => setPanel(null)} subtitle="El primer interés mensual completo se genera al desembolsar."/><label>Cliente activo<SearchPicker rows={activeClients} selectedId={loanForm.clienteId} onChange={(clienteId) => setLoanForm({ ...loanForm, clienteId })} /></label><label>Socio y fondo PRÉSTAMOS<select required value={loanForm.socioId} onChange={(e) => setLoanForm({ ...loanForm, socioId: e.target.value })}><option value="">Seleccionar</option>{partners.filter((p) => p.activo !== false && ((p.custodias as Row[] | undefined) ?? []).some((f) => f.actividad === 'PRESTAMOS')).map((p) => <option key={String(p.id)} value={String(p.id)}>{String(p.nombre)}</option>)}</select></label><label>Capital<input required type="number" min="0.01" step="0.01" value={loanForm.capital} onChange={(e) => setLoanForm({ ...loanForm, capital: e.target.value })} /></label><label>Tasa mensual %<input required type="number" min="0" max="100" step="0.01" value={loanForm.tasaMensual} onChange={(e) => setLoanForm({ ...loanForm, tasaMensual: e.target.value })} /></label><label>Desembolso<input required type="date" value={loanForm.fechaDesembolso} onChange={(e) => { const fechaDesembolso = e.target.value; setLoanForm({ ...loanForm, fechaDesembolso, fechaProximoPago: nextDateManual ? loanForm.fechaProximoPago : addLoanMonth(fechaDesembolso) }); }} /></label><label>Próximo pago<input required type="date" min={loanForm.fechaDesembolso} value={loanForm.fechaProximoPago} onChange={(e) => { setNextDateManual(true); setLoanForm({ ...loanForm, fechaProximoPago: e.target.value }); }} /></label><label className="loan-observations">Observaciones <span>{loanForm.observaciones.length}/2000</span><textarea maxLength={2000} value={loanForm.observaciones} onChange={(e) => setLoanForm({ ...loanForm, observaciones: e.target.value })} /></label><div className={`loan-fund ${capital > fundBalance ? 'insufficient' : ''}`}><span>Saldo disponible <strong>{formatMoney(fundBalance)}</strong></span><span>Saldo posterior <strong>{formatMoney(fundBalance - capital)}</strong></span></div><button className="primary" disabled={processing || !loanForm.clienteId || !fund || capital <= 0 || capital > fundBalance}>{processing ? 'Desembolsando préstamo...' : 'Desembolsar préstamo'}</button></form>}
-    {panel === 'pago' && <form className="panel loan-operation-form payment-form" onSubmit={pay}><PanelHead title="Registrar pago" close={() => setPanel(null)} subtitle="El servidor recalcula la liquidación con datos bloqueados."/><label>Préstamo<SearchPicker rows={payable as unknown as Row[]} loanMode selectedId={payment.prestamoId} onChange={(prestamoId) => setPayment({ ...payment, prestamoId })} /></label><label>Fecha de pago<input type="date" required value={payment.fechaPago} onChange={(e) => setPayment({ ...payment, fechaPago: e.target.value })} /></label><label>Monto<input type="number" min="0.01" step="0.01" required value={payment.monto} onChange={(e) => setPayment({ ...payment, monto: e.target.value })} /></label>{settlement && <SettlementGrid settlement={settlement} estimate={estimate} paymentDate={payment.fechaPago} loan={selectedPaymentLoan}/>}<button className="primary" disabled={processing || !estimate?.valid}>{processing ? 'Aplicando pago...' : 'Aplicar pago'}</button></form>}
-    {panel === 'historicos' && <Historical rows={historic} close={() => setPanel(null)}/>}
-    {panel === 'editar' && correction && <LoanModal label="Editar préstamo" variant="form" error={error}><form className="panel loan-operation-form" onSubmit={submitCorrection}><PanelHead title="Editar préstamo" close={() => { setPanel(null); setCorrection(null); }} subtitle="Los cambios quedan auditados y el fondo PRESTAMOS se ajusta automáticamente."/><label>Cliente<SearchPicker rows={clients} selectedId={correction.clienteId} onChange={(clienteId) => setCorrection({ ...correction, clienteId })} /></label><label>Socio y fondo PRÉSTAMOS<select required value={correction.socioId} onChange={(e) => setCorrection({ ...correction, socioId: e.target.value })}><option value="">Seleccionar</option>{partners.filter((p) => (p.activo !== false || p.id === correction.socioOriginalId) && ((p.custodias as Row[] | undefined) ?? []).some((f) => f.actividad === 'PRESTAMOS')).map((p) => <option key={String(p.id)} value={String(p.id)}>{String(p.nombre)}</option>)}</select></label><label>Tasa mensual %<input required type="number" min="0" max="100" step="0.01" value={correction.tasaMensual} onChange={(e) => setCorrection({ ...correction, tasaMensual: e.target.value })} /></label><label>Capital original<input required type="number" min="0.01" step="0.01" value={correction.capitalOriginal} onChange={(e) => setCorrection({ ...correction, capitalOriginal: e.target.value })} /></label><label>Capital pendiente<input required type="number" min="0" max={correction.capitalOriginal || undefined} step="0.01" value={correction.capitalPendiente} onChange={(e) => setCorrection({ ...correction, capitalPendiente: e.target.value })} /></label><label>Interés pendiente real<input required type="number" min="0" step="0.01" value={correction.interesPendiente} onChange={(e) => setCorrection({ ...correction, interesPendiente: e.target.value })} /></label><label>Fecha de desembolso (opcional)<input type="date" value={correction.fechaDesembolso} onChange={(e) => setCorrection({ ...correction, fechaDesembolso: e.target.value })} /></label><label>Próximo pago<input required type="date" min={correction.fechaDesembolso || undefined} value={correction.fechaProximoPago} onChange={(e) => setCorrection({ ...correction, fechaProximoPago: e.target.value })} /></label><label>Motivo de la edición<textarea required minLength={3} maxLength={2000} value={correction.motivo} onChange={(e) => setCorrection({ ...correction, motivo: e.target.value })} />{correction.motivo.trim().length < 3 && <small className="field-guidance">Debes indicar un motivo de al menos 3 caracteres para habilitar el guardado.</small>}</label><label className="loan-observations">Observaciones <span>{correction.observaciones.length}/2000</span><textarea maxLength={2000} value={correction.observaciones} onChange={(e) => setCorrection({ ...correction, observaciones: e.target.value })} /></label><div className={`loan-fund ${correctionInsufficient ? 'insufficient' : ''}`}><span>Saldo del fondo seleccionado <strong>{formatMoney(correctionFund?.saldo_actual ?? 0)}</strong></span><span>Saldo posterior estimado <strong>{formatMoney(correctionFundAfter)}</strong></span></div>{correctionInsufficient && <p className="loan-correction-note">El fondo seleccionado no tiene saldo suficiente para este ajuste.</p>}<p className="loan-correction-note">Los intereses pendientes anteriores se conservan en el historial y se sustituyen por el valor indicado.</p><button type="submit" className="primary" disabled={processing || !correction.clienteId || !correction.socioId || !correctionFund || correctionInsufficient || correction.motivo.trim().length < 3}>{processing ? 'Guardando edición...' : 'Guardar edición'}</button></form></LoanModal>}
+      {panel === "nuevo" && (
+        <form className="panel loan-operation-form" onSubmit={create}>
+          <PanelHead
+            title="Nuevo préstamo"
+            close={() => setPanel(null)}
+            subtitle="El primer interés mensual completo se genera al desembolsar."
+          />
+          <label>
+            Cliente activo
+            <SearchPicker
+              rows={activeClients}
+              selectedId={loanForm.clienteId}
+              onChange={(clienteId) => setLoanForm({ ...loanForm, clienteId })}
+            />
+          </label>
+          <label>
+            Socio y fondo PRÉSTAMOS
+            <select
+              required
+              value={loanForm.socioId}
+              onChange={(e) =>
+                setLoanForm({ ...loanForm, socioId: e.target.value })
+              }
+            >
+              <option value="">Seleccionar</option>
+              {partners
+                .filter(
+                  (p) =>
+                    p.activo !== false &&
+                    ((p.custodias as Row[] | undefined) ?? []).some(
+                      (f) => f.actividad === "PRESTAMOS",
+                    ),
+                )
+                .map((p) => (
+                  <option key={String(p.id)} value={String(p.id)}>
+                    {String(p.nombre)}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label>
+            Capital
+            <input
+              required
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={loanForm.capital}
+              onChange={(e) =>
+                setLoanForm({ ...loanForm, capital: e.target.value })
+              }
+            />
+          </label>
+          <label>
+            Tasa mensual %
+            <input
+              required
+              type="number"
+              min="0"
+              max="100"
+              step="0.01"
+              value={loanForm.tasaMensual}
+              onChange={(e) =>
+                setLoanForm({ ...loanForm, tasaMensual: e.target.value })
+              }
+            />
+          </label>
+          <label>
+            Desembolso
+            <input
+              required
+              type="date"
+              value={loanForm.fechaDesembolso}
+              onChange={(e) => {
+                const fechaDesembolso = e.target.value;
+                setLoanForm({
+                  ...loanForm,
+                  fechaDesembolso,
+                  fechaProximoPago: nextDateManual
+                    ? loanForm.fechaProximoPago
+                    : addLoanMonth(fechaDesembolso),
+                });
+              }}
+            />
+          </label>
+          <label>
+            Próximo pago
+            <input
+              required
+              type="date"
+              min={loanForm.fechaDesembolso}
+              value={loanForm.fechaProximoPago}
+              onChange={(e) => {
+                setNextDateManual(true);
+                setLoanForm({ ...loanForm, fechaProximoPago: e.target.value });
+              }}
+            />
+          </label>
+          <label className="loan-observations">
+            Observaciones <span>{loanForm.observaciones.length}/2000</span>
+            <textarea
+              maxLength={2000}
+              value={loanForm.observaciones}
+              onChange={(e) =>
+                setLoanForm({ ...loanForm, observaciones: e.target.value })
+              }
+            />
+          </label>
+          <div
+            className={`loan-fund ${capital > fundBalance ? "insufficient" : ""}`}
+          >
+            <span>
+              Saldo disponible <strong>{formatMoney(fundBalance)}</strong>
+            </span>
+            <span>
+              Saldo posterior{" "}
+              <strong>{formatMoney(fundBalance - capital)}</strong>
+            </span>
+          </div>
+          <button
+            className="primary"
+            disabled={
+              processing ||
+              !loanForm.clienteId ||
+              !fund ||
+              capital <= 0
+            }
+          >
+            {processing ? "Desembolsando préstamo..." : "Desembolsar préstamo"}
+          </button>
+        </form>
+      )}
+      {panel === "pago" && (
+        <form className="panel loan-operation-form payment-form" onSubmit={pay}>
+          <PanelHead
+            title="Registrar pago"
+            close={() => setPanel(null)}
+            subtitle="El servidor recalcula la liquidación con datos bloqueados."
+          />
+          <label>
+            Préstamo
+            <SearchPicker
+              rows={payable as unknown as Row[]}
+              loanMode
+              selectedId={payment.prestamoId}
+              onChange={(prestamoId) => setPayment({ ...payment, prestamoId })}
+            />
+          </label>
+          <label>
+            Fecha de pago
+            <input
+              type="date"
+              required
+              value={payment.fechaPago}
+              onChange={(e) =>
+                setPayment({ ...payment, fechaPago: e.target.value })
+              }
+            />
+          </label>
+          <label>
+            Pago aplicado al préstamo
+            <input
+              type="number"
+              min="0.01"
+              step="0.01"
+              required
+              value={payment.monto}
+              onChange={(e) =>
+                setPayment({ ...payment, monto: e.target.value })
+              }
+            />
+          </label>
+          <label>
+            Monto extra recibido
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={payment.montoExtra}
+              onChange={(e) =>
+                setPayment({ ...payment, montoExtra: e.target.value })
+              }
+            />
+            <small>
+              No reduce capital ni intereses; se acredita al fondo PRESTAMOS del
+              socio.
+            </small>
+          </label>
+          {settlement && (
+            <SettlementGrid
+              settlement={settlement}
+              estimate={estimate}
+              paymentDate={payment.fechaPago}
+              loan={selectedPaymentLoan}
+            />
+          )}
+          <div className="distribution-share">
+            <span>Total recibido</span>
+            <output>
+              {formatMoney(
+                Number(payment.monto || 0) + Number(payment.montoExtra || 0),
+              )}
+            </output>
+          </div>
+          <button className="primary" disabled={processing || !estimate?.valid}>
+            {processing ? "Aplicando pago..." : "Aplicar pago"}
+          </button>
+        </form>
+      )}
+      {panel === "historicos" && (
+        <Historical rows={historic} close={() => setPanel(null)} />
+      )}
+      {panel === "editar" && correction && (
+        <LoanModal label="Editar préstamo" variant="form" error={error}>
+          <form
+            className="panel loan-operation-form"
+            onSubmit={submitCorrection}
+          >
+            <PanelHead
+              title="Editar préstamo"
+              close={() => {
+                setPanel(null);
+                setCorrection(null);
+              }}
+              subtitle="Los cambios quedan auditados y el fondo PRESTAMOS se ajusta automáticamente."
+            />
+            <label>
+              Cliente
+              <SearchPicker
+                rows={clients}
+                selectedId={correction.clienteId}
+                onChange={(clienteId) =>
+                  setCorrection({ ...correction, clienteId })
+                }
+              />
+            </label>
+            <label>
+              Socio y fondo PRÉSTAMOS
+              <select
+                required
+                value={correction.socioId}
+                onChange={(e) =>
+                  setCorrection({ ...correction, socioId: e.target.value })
+                }
+              >
+                <option value="">Seleccionar</option>
+                {partners
+                  .filter(
+                    (p) =>
+                      (p.activo !== false ||
+                        p.id === correction.socioOriginalId) &&
+                      ((p.custodias as Row[] | undefined) ?? []).some(
+                        (f) => f.actividad === "PRESTAMOS",
+                      ),
+                  )
+                  .map((p) => (
+                    <option key={String(p.id)} value={String(p.id)}>
+                      {String(p.nombre)}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label>
+              Tasa mensual %
+              <input
+                required
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                value={correction.tasaMensual}
+                onChange={(e) =>
+                  setCorrection({ ...correction, tasaMensual: e.target.value })
+                }
+              />
+            </label>
+            <label>
+              Capital original
+              <input
+                required
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={correction.capitalOriginal}
+                onChange={(e) =>
+                  setCorrection({
+                    ...correction,
+                    capitalOriginal: e.target.value,
+                  })
+                }
+              />
+            </label>
+            <label>
+              Capital pendiente
+              <input
+                required
+                type="number"
+                min="0"
+                max={correction.capitalOriginal || undefined}
+                step="0.01"
+                value={correction.capitalPendiente}
+                onChange={(e) =>
+                  setCorrection({
+                    ...correction,
+                    capitalPendiente: e.target.value,
+                  })
+                }
+              />
+            </label>
+            <label>
+              Interés pendiente real
+              <input
+                required
+                type="number"
+                min="0"
+                step="0.01"
+                value={correction.interesPendiente}
+                onChange={(e) =>
+                  setCorrection({
+                    ...correction,
+                    interesPendiente: e.target.value,
+                  })
+                }
+              />
+            </label>
+            <label>
+              Fecha de desembolso (opcional)
+              <input
+                type="date"
+                value={correction.fechaDesembolso}
+                onChange={(e) =>
+                  setCorrection({
+                    ...correction,
+                    fechaDesembolso: e.target.value,
+                  })
+                }
+              />
+            </label>
+            <label>
+              Próximo pago
+              <input
+                required
+                type="date"
+                min={correction.fechaDesembolso || undefined}
+                value={correction.fechaProximoPago}
+                onChange={(e) =>
+                  setCorrection({
+                    ...correction,
+                    fechaProximoPago: e.target.value,
+                  })
+                }
+              />
+            </label>
+            <label>
+              Motivo de la edición
+              <textarea
+                required
+                minLength={3}
+                maxLength={2000}
+                value={correction.motivo}
+                onChange={(e) =>
+                  setCorrection({ ...correction, motivo: e.target.value })
+                }
+              />
+              {correction.motivo.trim().length < 3 && (
+                <small className="field-guidance">
+                  Debes indicar un motivo de al menos 3 caracteres para
+                  habilitar el guardado.
+                </small>
+              )}
+            </label>
+            <label className="loan-observations">
+              Observaciones <span>{correction.observaciones.length}/2000</span>
+              <textarea
+                maxLength={2000}
+                value={correction.observaciones}
+                onChange={(e) =>
+                  setCorrection({
+                    ...correction,
+                    observaciones: e.target.value,
+                  })
+                }
+              />
+            </label>
+            <div
+              className={`loan-fund ${correctionInsufficient ? "insufficient" : ""}`}
+            >
+              <span>
+                Saldo del fondo seleccionado{" "}
+                <strong>
+                  {formatMoney(correctionFund?.saldo_actual ?? 0)}
+                </strong>
+              </span>
+              <span>
+                Saldo posterior estimado{" "}
+                <strong>{formatMoney(correctionFundAfter)}</strong>
+              </span>
+            </div>
+            {correctionInsufficient && (
+              <p className="loan-correction-note">
+                El ajuste dejará el fondo con saldo negativo y quedará
+                registrado en su historial.
+              </p>
+            )}
+            <p className="loan-correction-note">
+              Los intereses pendientes anteriores se conservan en el historial y
+              se sustituyen por el valor indicado.
+            </p>
+            <button
+              type="submit"
+              className="primary"
+              disabled={
+                processing ||
+                !correction.clienteId ||
+                !correction.socioId ||
+                !correctionFund ||
+                correction.motivo.trim().length < 3
+              }
+            >
+              {processing ? "Guardando edición..." : "Guardar edición"}
+            </button>
+          </form>
+        </LoanModal>
+      )}
 
-    <section className="loan-funds" aria-labelledby="loan-funds-title"><h3 id="loan-funds-title">Fondos disponibles para préstamos</h3><div className="loan-funds-grid">{availableLoanFunds.map((item) => <article className="loan-fund-card" key={item.partnerId}><span>{item.partnerName}</span><strong>{formatMoney(item.balance)}</strong><small>Disponible</small></article>)}</div></section>
-    <section className="panel list-panel loans-table"><div className="table-tools loan-tools"><div className="search"><Search size={16} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por cliente…" />{search && <button type="button" aria-label="Limpiar búsqueda" onClick={() => setSearch('')}><X size={14} /></button>}</div><label className="loan-filter-field"><span>Estado</span><select aria-label="Estado" value={state} onChange={(e) => setState(e.target.value as typeof state)}>{states.map((value) => <option key={value} value={value}>{value === 'ELIMINADO' ? 'ELIMINADOS' : value}</option>)}</select></label><label className="loan-filter-field"><span>Socio</span><select aria-label="Socio" value={partnerFilter} onChange={(e) => setPartnerFilter(e.target.value)}><option value="TODOS">TODOS</option>{loanPartners.map((partner) => <option key={partner} value={partner}>{partner}</option>)}</select></label><strong>{filtered.length} de {loans.length} préstamos</strong></div>
-      <div className="table-wrap desktop-record-table"><table><thead><tr><th>Cliente</th><th>Socio</th><th>Capital original</th><th>Capital pendiente</th><th>Intereses</th><th>Total adeudado</th><th>Tasa</th><th>Próximo pago</th><th>Estado</th><th></th></tr></thead><tbody>{filtered.map((loan) => { const effectiveState = effectiveLoanState(loan); return <tr key={loan.id}><td><strong>{loan.cliente}</strong>{loan.es_heredado && <small className="legacy-badge">Heredado</small>}</td><td>{loan.socio}</td><td>{formatMoney(loan.capital_original)}</td><td>{formatMoney(loan.capital_pendiente)}</td><td>{formatMoney(loan.intereses_pendientes)}</td><td>{formatMoney(loan.total_adeudado)}</td><td>{Number(loan.tasa_mensual)}%</td><td>{displayDate(loan.fecha_proximo_pago)}</td><td><span className={`status loan-status-${effectiveState.toLowerCase()}`}>{effectiveState}</span></td><td><div className="loan-row-actions">{!loan.eliminado_at && <button className="edit-button" type="button" onClick={() => beginCorrection(loan)}><Pencil size={14} /> Editar</button>}<button className="edit-button" type="button" onClick={() => void openDetail(loan.id)}><Eye size={14} /> Ver</button></div></td></tr>; })}{!filtered.length && <tr><td colSpan={10} className="empty-cell">{source === 'loading' ? 'Cargando préstamos…' : 'No hay préstamos que coincidan.'}</td></tr>}</tbody></table></div>
-      <div className="mobile-record-list" aria-label="Préstamos en formato móvil">{filtered.length ? filtered.map((loan) => { const effectiveState = effectiveLoanState(loan); return <article className="mobile-record-card loan-mobile-card" key={loan.id}><div className="mobile-record-header"><div><span className="mobile-record-kicker">{loan.socio} · fondo PRESTAMOS</span><h4>{loan.cliente}</h4>{loan.es_heredado && <small className="legacy-badge">Heredado</small>}</div><span className={`status loan-status-${effectiveState.toLowerCase()}`}>{effectiveState}</span></div><div><span className="mobile-record-label">Capital pendiente</span><strong className="mobile-record-primary">{formatMoney(loan.capital_pendiente)}</strong></div><div className="mobile-record-grid"><span>Interés pendiente<strong>{formatMoney(loan.intereses_pendientes)}</strong></span><span>Próximo pago<strong>{displayDate(loan.fecha_proximo_pago)}</strong></span><span>Total adeudado<strong>{formatMoney(loan.total_adeudado)}</strong></span><span>Tasa mensual<strong>{Number(loan.tasa_mensual)}%</strong></span></div><div className="mobile-record-actions">{!loan.eliminado_at && ['ACTIVO', 'VENCIDO'].includes(loan.estado) && <button className="edit-button" type="button" onClick={() => beginPayment(loan)}><CreditCard size={15} /> Pago</button>}{!loan.eliminado_at && <button className="edit-button" type="button" onClick={() => beginCorrection(loan)}><Pencil size={15} /> Editar</button>}<button className="edit-button" type="button" onClick={() => void openDetail(loan.id)}><Eye size={15} /> Ver</button></div></article>; }) : <p className="mobile-record-empty">{source === 'loading' ? 'Cargando préstamos…' : 'No hay préstamos que coincidan.'}</p>}</div>
-    </section>
-    {detail && <LoanModal label={`Detalle del préstamo de ${detail.prestamo.cliente}`} error={error}><LoanDetail detail={detail} action={action} form={actionForm} processing={processing} setForm={setActionForm} begin={beginAction} edit={() => beginCorrection(detail.prestamo)} pay={() => beginPayment(detail.prestamo)} cancel={() => setAction(null)} close={() => setDetail(null)} submit={submitAction}/></LoanModal>}
-  </>;
+      <section className="loan-funds" aria-labelledby="loan-funds-title">
+        <h3 id="loan-funds-title">Fondos disponibles para préstamos</h3>
+        <div className="loan-funds-grid">
+          {availableLoanFunds.map((item) => (
+            <article className="loan-fund-card" key={item.partnerId}>
+              <span>{item.partnerName}</span>
+              <strong>{formatMoney(item.balance)}</strong>
+              <small>Disponible</small>
+            </article>
+          ))}
+        </div>
+      </section>
+      <section className="panel list-panel loans-table">
+        <div className="table-tools loan-tools">
+          <div className="search">
+            <Search size={16} />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar por cliente…"
+            />
+            {search && (
+              <button
+                type="button"
+                aria-label="Limpiar búsqueda"
+                onClick={() => setSearch("")}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <label className="loan-filter-field">
+            <span>Estado</span>
+            <select
+              aria-label="Estado"
+              value={state}
+              onChange={(e) => setState(e.target.value as typeof state)}
+            >
+              {states.map((value) => (
+                <option key={value} value={value}>
+                  {value === "ELIMINADO" ? "ELIMINADOS" : value}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="loan-filter-field">
+            <span>Socio</span>
+            <select
+              aria-label="Socio"
+              value={partnerFilter}
+              onChange={(e) => setPartnerFilter(e.target.value)}
+            >
+              <option value="TODOS">TODOS</option>
+              {loanPartners.map((partner) => (
+                <option key={partner} value={partner}>
+                  {partner}
+                </option>
+              ))}
+            </select>
+          </label>
+          <strong>
+            {filtered.length} de {loans.length} préstamos
+          </strong>
+        </div>
+        <div className="table-wrap desktop-record-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th>Socio</th>
+                <th>Capital original</th>
+                <th>Capital pendiente</th>
+                <th>Intereses</th>
+                <th>Total adeudado</th>
+                <th>Tasa</th>
+                <th>Próximo pago</th>
+                <th>Estado</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((loan) => {
+                const effectiveState = effectiveLoanState(loan);
+                return (
+                  <tr className={`loan-due-${loanDueAlert(loan, today())}`} key={loan.id}>
+                    <td>
+                      <strong>{loan.cliente}</strong>
+                      {loan.es_heredado && (
+                        <small className="legacy-badge">Heredado</small>
+                      )}
+                    </td>
+                    <td>{loan.socio}</td>
+                    <td>{formatMoney(loan.capital_original)}</td>
+                    <td>{formatMoney(loan.capital_pendiente)}</td>
+                    <td>{formatMoney(loan.intereses_pendientes)}</td>
+                    <td>{formatMoney(loan.total_adeudado)}</td>
+                    <td>{Number(loan.tasa_mensual)}%</td>
+                    <td>{displayDate(loan.fecha_proximo_pago)}</td>
+                    <td>
+                      <span
+                        className={`status loan-status-${effectiveState.toLowerCase()}`}
+                      >
+                        {effectiveState}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="loan-row-actions">
+                        {!loan.eliminado_at && (
+                          <button
+                            className="edit-button"
+                            type="button"
+                            onClick={() => beginCorrection(loan)}
+                          >
+                            <Pencil size={14} /> Editar
+                          </button>
+                        )}
+                        <button
+                          className="edit-button"
+                          type="button"
+                          onClick={() => void openDetail(loan.id)}
+                        >
+                          <Eye size={14} /> Ver
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {!filtered.length && (
+                <tr>
+                  <td colSpan={10} className="empty-cell">
+                    {source === "loading"
+                      ? "Cargando préstamos…"
+                      : "No hay préstamos que coincidan."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div
+          className="mobile-record-list"
+          aria-label="Préstamos en formato móvil"
+        >
+          {filtered.length ? (
+            filtered.map((loan) => {
+              const effectiveState = effectiveLoanState(loan);
+              return (
+                <article
+                  className={`mobile-record-card loan-mobile-card loan-due-${loanDueAlert(loan, today())}`}
+                  key={loan.id}
+                >
+                  <div className="mobile-record-header">
+                    <div>
+                      <span className="mobile-record-kicker">
+                        {loan.socio} · fondo PRESTAMOS
+                      </span>
+                      <h4>{loan.cliente}</h4>
+                      {loan.es_heredado && (
+                        <small className="legacy-badge">Heredado</small>
+                      )}
+                    </div>
+                    <span
+                      className={`status loan-status-${effectiveState.toLowerCase()}`}
+                    >
+                      {effectiveState}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="mobile-record-label">
+                      Capital pendiente
+                    </span>
+                    <strong className="mobile-record-primary">
+                      {formatMoney(loan.capital_pendiente)}
+                    </strong>
+                  </div>
+                  <div className="mobile-record-grid">
+                    <span>
+                      Interés pendiente
+                      <strong>{formatMoney(loan.intereses_pendientes)}</strong>
+                    </span>
+                    <span>
+                      Próximo pago
+                      <strong>{displayDate(loan.fecha_proximo_pago)}</strong>
+                    </span>
+                    <span>
+                      Total adeudado
+                      <strong>{formatMoney(loan.total_adeudado)}</strong>
+                    </span>
+                    <span>
+                      Tasa mensual<strong>{Number(loan.tasa_mensual)}%</strong>
+                    </span>
+                  </div>
+                  <div className="mobile-record-actions">
+                    {!loan.eliminado_at &&
+                      ["ACTIVO", "VENCIDO"].includes(loan.estado) && (
+                        <button
+                          className="edit-button"
+                          type="button"
+                          onClick={() => beginPayment(loan)}
+                        >
+                          <CreditCard size={15} /> Pago
+                        </button>
+                      )}
+                    {!loan.eliminado_at && (
+                      <button
+                        className="edit-button"
+                        type="button"
+                        onClick={() => beginCorrection(loan)}
+                      >
+                        <Pencil size={15} /> Editar
+                      </button>
+                    )}
+                    <button
+                      className="edit-button"
+                      type="button"
+                      onClick={() => void openDetail(loan.id)}
+                    >
+                      <Eye size={15} /> Ver
+                    </button>
+                  </div>
+                </article>
+              );
+            })
+          ) : (
+            <p className="mobile-record-empty">
+              {source === "loading"
+                ? "Cargando préstamos…"
+                : "No hay préstamos que coincidan."}
+            </p>
+          )}
+        </div>
+      </section>
+      {detail && (
+        <LoanModal
+          label={`Detalle del préstamo de ${detail.prestamo.cliente}`}
+          error={error}
+        >
+          <LoanDetail
+            detail={detail}
+            action={action}
+            form={actionForm}
+            processing={processing}
+            setForm={setActionForm}
+            begin={beginAction}
+            edit={() => beginCorrection(detail.prestamo)}
+            pay={() => beginPayment(detail.prestamo)}
+            cancel={() => setAction(null)}
+            close={() => setDetail(null)}
+            submit={submitAction}
+          />
+        </LoanModal>
+      )}
+    </>
+  );
 }
 
-function LoanModal({ children, label, error, variant = 'detail' }: { children: React.ReactNode; label: string; error?: string; variant?: 'detail' | 'form' }) { return createPortal(<div className="loan-modal-overlay"><div className={`loan-modal-content loan-modal-${variant}`} role="dialog" aria-modal="true" aria-label={label}>{error && <p className="purchase-warning loan-modal-error">{error}</p>}{children}</div></div>, document.body); }
-function PanelHead({ title, subtitle, close }: { title: string; subtitle: string; close: () => void }) { return <div className="panel-head"><div><h3>{title}</h3><p>{subtitle}</p></div><button type="button" className="close-button" onClick={close}><X /></button></div>; }
-function SettlementGrid({ settlement, estimate, paymentDate, loan }: { settlement: Settlement; estimate: ReturnType<typeof paymentEstimate> | null; paymentDate: string; loan?: LoanRow }) { return <div className="settlement-grid"><span>Cliente<strong>{loan?.cliente ?? '—'}</strong></span><span>Socio / fondo receptor<strong>{loan ? `${loan.socio} · PRESTAMOS` : '—'}</strong></span><span>Capital<strong>{formatMoney(settlement.capitalPendiente)}</strong></span><span>Intereses ({settlement.periodosPendientes})<strong>{formatMoney(settlement.interesesPendientes)}</strong></span><span>Pago mínimo<strong>{formatMoney(settlement.pagoMinimo)}</strong></span><span>Total máximo<strong>{formatMoney(settlement.totalMaximo)}</strong></span><span>A interés<strong>{formatMoney(estimate?.interest)}</strong></span><span>A capital<strong>{formatMoney(estimate?.capital)}</strong></span><span>Capital restante<strong>{formatMoney(estimate?.remaining ?? settlement.capitalPendiente)}</strong></span><span>Próxima fecha<strong>{displayDate(settlement.proximaFecha)}</strong></span><span>Estado estimado<strong>{estimate?.remaining === 0 ? 'PAGADO' : settlement.proximaFecha > paymentDate ? 'ACTIVO' : 'VENCIDO'}</strong></span></div>; }
-function Historical({ rows, close }: { rows: Row[]; close: () => void }) { const [search, setSearch] = useState(''); const [from, setFrom] = useState(''); const [to, setTo] = useState(''); const filtered = rows.filter((row) => String(row.cliente ?? '').toLocaleLowerCase('es-HN').includes(search.trim().toLocaleLowerCase('es-HN')) && (!from || String(row.fecha_pago ?? '') >= from) && (!to || String(row.fecha_pago ?? '') <= to)); return <section className="panel loan-historic"><PanelHead title="Pagos históricos migrados" subtitle="Referencia separada: no altera fondos, capital, intereses ni ganancias." close={close}/><div className="historical-filters"><label>Cliente<input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar cliente…" /></label><label>Desde<input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label><label>Hasta<input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></label><strong>{filtered.length} de {rows.length}</strong></div><div className="table-wrap"><table><thead><tr><th>Cliente</th><th>Capital referencia</th><th>Interés pagado</th><th>Tasa</th><th>Fecha</th><th>Responsable</th><th>Observaciones</th></tr></thead><tbody>{filtered.map((row) => <tr key={String(row.id)}><td>{String(row.cliente ?? '—')}</td><td>{formatMoney(row.capital_referencia as string)}</td><td>{formatMoney(row.interes_pagado as string)}</td><td>{String(row.tasa_catalogo ?? row.tasa_inferida ?? '—')}</td><td>{displayDate(row.fecha_pago)}</td><td>{String(row.socio ?? row.responsable_original ?? '—')}</td><td>{String(row.observaciones ?? '—')}</td></tr>)}{!filtered.length && <tr><td colSpan={7} className="empty-cell">No hay pagos históricos que coincidan.</td></tr>}</tbody></table></div></section>; }
+function LoanModal({
+  children,
+  label,
+  error,
+  variant = "detail",
+}: {
+  children: React.ReactNode;
+  label: string;
+  error?: string;
+  variant?: "detail" | "form";
+}) {
+  return createPortal(
+    <div className="loan-modal-overlay">
+      <div
+        className={`loan-modal-content loan-modal-${variant}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={label}
+      >
+        {error && <p className="purchase-warning loan-modal-error">{error}</p>}
+        {children}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+function PanelHead({
+  title,
+  subtitle,
+  close,
+}: {
+  title: string;
+  subtitle: string;
+  close: () => void;
+}) {
+  return (
+    <div className="panel-head">
+      <div>
+        <h3>{title}</h3>
+        <p>{subtitle}</p>
+      </div>
+      <button type="button" className="close-button" onClick={close}>
+        <X />
+      </button>
+    </div>
+  );
+}
+function SettlementGrid({
+  settlement,
+  estimate,
+  paymentDate,
+  loan,
+}: {
+  settlement: Settlement;
+  estimate: ReturnType<typeof paymentEstimate> | null;
+  paymentDate: string;
+  loan?: LoanRow;
+}) {
+  return (
+    <div className="settlement-grid">
+      <span>
+        Cliente<strong>{loan?.cliente ?? "—"}</strong>
+      </span>
+      <span>
+        Socio / fondo receptor
+        <strong>{loan ? `${loan.socio} · PRESTAMOS` : "—"}</strong>
+      </span>
+      <span>
+        Capital<strong>{formatMoney(settlement.capitalPendiente)}</strong>
+      </span>
+      <span>
+        Intereses ({settlement.periodosPendientes})
+        <strong>{formatMoney(settlement.interesesPendientes)}</strong>
+      </span>
+      <span>
+        Pago mínimo<strong>{formatMoney(settlement.pagoMinimo)}</strong>
+      </span>
+      <span>
+        Total máximo<strong>{formatMoney(settlement.totalMaximo)}</strong>
+      </span>
+      <span>
+        A interés<strong>{formatMoney(estimate?.interest)}</strong>
+      </span>
+      <span>
+        A capital<strong>{formatMoney(estimate?.capital)}</strong>
+      </span>
+      <span>
+        Capital restante
+        <strong>
+          {formatMoney(estimate?.remaining ?? settlement.capitalPendiente)}
+        </strong>
+      </span>
+      <span>
+        Próxima fecha<strong>{displayDate(settlement.proximaFecha)}</strong>
+      </span>
+      <span>
+        Estado estimado
+        <strong>
+          {estimate?.remaining === 0
+            ? "PAGADO"
+            : settlement.proximaFecha > paymentDate
+              ? "ACTIVO"
+              : "VENCIDO"}
+        </strong>
+      </span>
+    </div>
+  );
+}
+function Historical({ rows, close }: { rows: Row[]; close: () => void }) {
+  const [search, setSearch] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const filtered = rows.filter(
+    (row) =>
+      String(row.cliente ?? "")
+        .toLocaleLowerCase("es-HN")
+        .includes(search.trim().toLocaleLowerCase("es-HN")) &&
+      (!from || String(row.fecha_pago ?? "") >= from) &&
+      (!to || String(row.fecha_pago ?? "") <= to),
+  );
+  return (
+    <section className="panel loan-historic">
+      <PanelHead
+        title="Pagos históricos migrados"
+        subtitle="Referencia separada: no altera fondos, capital, intereses ni ganancias."
+        close={close}
+      />
+      <div className="historical-filters">
+        <label>
+          Cliente
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar cliente…"
+          />
+        </label>
+        <label>
+          Desde
+          <input
+            type="date"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+          />
+        </label>
+        <label>
+          Hasta
+          <input
+            type="date"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+          />
+        </label>
+        <strong>
+          {filtered.length} de {rows.length}
+        </strong>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Cliente</th>
+              <th>Capital referencia</th>
+              <th>Interés pagado</th>
+              <th>Tasa</th>
+              <th>Fecha</th>
+              <th>Responsable</th>
+              <th>Observaciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((row) => (
+              <tr key={String(row.id)}>
+                <td>{String(row.cliente ?? "—")}</td>
+                <td>{formatMoney(row.capital_referencia as string)}</td>
+                <td>{formatMoney(row.interes_pagado as string)}</td>
+                <td>{String(row.tasa_catalogo ?? row.tasa_inferida ?? "—")}</td>
+                <td>{displayDate(row.fecha_pago)}</td>
+                <td>{String(row.socio ?? row.responsable_original ?? "—")}</td>
+                <td>{String(row.observaciones ?? "—")}</td>
+              </tr>
+            ))}
+            {!filtered.length && (
+              <tr>
+                <td colSpan={7} className="empty-cell">
+                  No hay pagos históricos que coincidan.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
 
-function LoanDetail({ detail, action, form, processing, setForm, begin, edit, pay, cancel, close, submit }: { detail: Detail; action: { type: Action; targetId?: string } | null; form: { fecha: string; fechaProximoPago: string; monto: string; motivo: string; observaciones: string }; processing: boolean; setForm: (value: typeof form) => void; begin: (type: Action, id?: string) => void; edit: () => void; pay: () => void; cancel: () => void; close: () => void; submit: (event: FormEvent) => void }) {
-  const loan = detail.prestamo; const deleted = Boolean(loan.eliminado_at); const effectiveState = effectiveLoanState(loan); return <section className="panel loan-detail"><PanelHead title={`${loan.cliente} · ${effectiveState}`} subtitle={`${loan.es_heredado ? 'Préstamo heredado' : `Desembolsado ${displayDate(loan.fecha_desembolso)}`} · ${loan.socio} · fondo PRESTAMOS`} close={close}/><div className="settlement-grid"><span>Capital original<strong>{formatMoney(loan.capital_original)}</strong></span><span>Capital pendiente<strong>{formatMoney(loan.capital_pendiente)}</strong></span>{loan.saldo_incobrable != null && <span>Saldo incobrable pendiente<strong>{formatMoney(loan.saldo_incobrable)}</strong></span>}<span>Intereses pendientes<strong>{formatMoney(loan.intereses_pendientes)}</strong></span><span>Total adeudado<strong>{formatMoney(loan.total_adeudado)}</strong></span><span>Próxima fecha<strong>{displayDate(loan.fecha_proximo_pago)}</strong></span><span>Fondo disponible<strong>{formatMoney(loan.fondo_saldo)}</strong></span><span>Cliente<strong>{loan.cliente_activo ? 'Activo' : 'Inactivo'}</strong></span><span>Observaciones<strong>{loan.observaciones || '—'}</strong></span>{deleted && <><span>Estado anterior<strong>{loan.estado_antes_eliminacion ?? loan.estado}</strong></span><span>Eliminado<strong>{displayDate(loan.eliminado_at)}</strong></span><span>Eliminado por<strong>{loan.eliminado_por_nombre || 'Usuario registrado'}</strong></span><span>Motivo de eliminación<strong>{loan.motivo_eliminacion}</strong></span></>}</div><div className="loan-detail-actions">{!deleted && <button className="secondary" onClick={edit}><Pencil size={14} /> Editar</button>}{!deleted && ['ACTIVO', 'VENCIDO'].includes(loan.estado) && <><button className="secondary" onClick={pay}><CreditCard size={14} /> Registrar pago</button><button className="secondary" onClick={() => begin('reprogramar')}>Reprogramar</button><button className="secondary danger" onClick={() => begin('incobrable')}>Declarar incobrable</button><button className="secondary danger" onClick={() => begin('anular')}>Anular</button></>}{!deleted && loan.estado === 'INCOBRABLE' && <button className="secondary" onClick={() => begin('recuperar')}>Registrar recuperación</button>}{!deleted && <button className="secondary danger" onClick={() => begin('eliminar')}>Eliminar</button>}</div>
-    {action && <form className="loan-action-form" onSubmit={submit}><h4>Acción controlada: {action.type}</h4>{action.type === 'reprogramar' && <label>Nueva fecha<input type="date" required value={form.fechaProximoPago} onChange={(e) => setForm({ ...form, fechaProximoPago: e.target.value })} /></label>}{['incobrable', 'recuperar', 'anular'].includes(action.type) && <label>Fecha<input type="date" required value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} /></label>}{action.type === 'recuperar' && <label>Monto<input type="number" required min="0.01" max={Number(loan.saldo_incobrable ?? 0)} step="0.01" value={form.monto} onChange={(e) => setForm({ ...form, monto: e.target.value })} /></label>}{action.type === 'recuperar' ? <label>Observaciones<textarea maxLength={2000} value={form.observaciones} onChange={(e) => setForm({ ...form, observaciones: e.target.value })} /></label> : <label>Motivo obligatorio<textarea required minLength={3} maxLength={2000} value={form.motivo} onChange={(e) => setForm({ ...form, motivo: e.target.value })} /></label>}<button className="primary" disabled={processing}>{processing ? 'Procesando...' : 'Confirmar acción'}</button><button className="secondary" type="button" onClick={cancel}>Cancelar</button></form>}
-    <div className="loan-detail-grid"><History title="Intereses por período" rows={detail.intereses} render={(item) => <><span>{displayDate(item.fecha_vencimiento)} · base {formatMoney(item.capital_base as string)}</span><strong>{formatMoney(item.monto_interes as string)} · pendiente {formatMoney(item.saldo_pendiente as string)}</strong>{item.cancelado_at && <em>Cancelado: {String(item.motivo_cancelacion)}</em>}</>}/><History title="Pagos operativos" rows={detail.pagos} render={(item) => <><span>{displayDate(item.fecha_pago)} · {formatMoney(item.monto_total as string)}</span><strong>Interés {formatMoney(item.monto_interes as string)} · capital {formatMoney(item.monto_capital as string)}</strong>{item.revertido_at ? <em>Revertido: {String(item.motivo_reversion)}</em> : !deleted && <button className="text-button" onClick={() => begin('revertir-pago', String(item.id))}><RotateCcw size={13}/> Revertir</button>}</>}/><History title="Reprogramaciones" rows={detail.reprogramaciones} render={(item) => <>{displayDate(item.fecha_anterior)} → {displayDate(item.fecha_nueva)} · {String(item.motivo)}</>}/><History title="Recuperaciones" rows={detail.recuperaciones} render={(item) => <><span>{displayDate(item.fecha)} · {formatMoney(item.monto as string)}</span>{item.revertido_at ? <em>Revertida</em> : !deleted && <button className="text-button" onClick={() => begin('revertir-recuperacion', String(item.id))}><RotateCcw size={13}/> Revertir</button>}</>}/><History title="Auditoría relacionada" rows={detail.auditoria} render={(item) => <AuditEntry item={item}/>} /></div></section>;
+function LoanDetail({
+  detail,
+  action,
+  form,
+  processing,
+  setForm,
+  begin,
+  edit,
+  pay,
+  cancel,
+  close,
+  submit,
+}: {
+  detail: Detail;
+  action: { type: Action; targetId?: string } | null;
+  form: {
+    fecha: string;
+    fechaProximoPago: string;
+    monto: string;
+    motivo: string;
+    observaciones: string;
+  };
+  processing: boolean;
+  setForm: (value: typeof form) => void;
+  begin: (type: Action, id?: string) => void;
+  edit: () => void;
+  pay: () => void;
+  cancel: () => void;
+  close: () => void;
+  submit: (event: FormEvent) => void;
+}) {
+  const loan = detail.prestamo;
+  const deleted = Boolean(loan.eliminado_at);
+  const effectiveState = effectiveLoanState(loan);
+  return (
+    <section className="panel loan-detail">
+      <PanelHead
+        title={`${loan.cliente} · ${effectiveState}`}
+        subtitle={`${loan.es_heredado ? "Préstamo heredado" : `Desembolsado ${displayDate(loan.fecha_desembolso)}`} · ${loan.socio} · fondo PRESTAMOS`}
+        close={close}
+      />
+      <div className="settlement-grid">
+        <span>
+          Capital original<strong>{formatMoney(loan.capital_original)}</strong>
+        </span>
+        <span>
+          Capital pendiente
+          <strong>{formatMoney(loan.capital_pendiente)}</strong>
+        </span>
+        {loan.saldo_incobrable != null && (
+          <span>
+            Saldo incobrable pendiente
+            <strong>{formatMoney(loan.saldo_incobrable)}</strong>
+          </span>
+        )}
+        <span>
+          Intereses pendientes
+          <strong>{formatMoney(loan.intereses_pendientes)}</strong>
+        </span>
+        <span>
+          Total adeudado<strong>{formatMoney(loan.total_adeudado)}</strong>
+        </span>
+        <span>
+          Próxima fecha<strong>{displayDate(loan.fecha_proximo_pago)}</strong>
+        </span>
+        <span>
+          Fondo disponible<strong>{formatMoney(loan.fondo_saldo)}</strong>
+        </span>
+        <span>
+          Cliente<strong>{loan.cliente_activo ? "Activo" : "Inactivo"}</strong>
+        </span>
+        <span>
+          Observaciones<strong>{loan.observaciones || "—"}</strong>
+        </span>
+        {deleted && (
+          <>
+            <span>
+              Estado anterior
+              <strong>{loan.estado_antes_eliminacion ?? loan.estado}</strong>
+            </span>
+            <span>
+              Eliminado<strong>{displayDate(loan.eliminado_at)}</strong>
+            </span>
+            <span>
+              Eliminado por
+              <strong>
+                {loan.eliminado_por_nombre || "Usuario registrado"}
+              </strong>
+            </span>
+            <span>
+              Motivo de eliminación<strong>{loan.motivo_eliminacion}</strong>
+            </span>
+          </>
+        )}
+      </div>
+      <div className="loan-detail-actions">
+        {!deleted && (
+          <button className="secondary" onClick={edit}>
+            <Pencil size={14} /> Editar
+          </button>
+        )}
+        {!deleted && ["ACTIVO", "VENCIDO"].includes(loan.estado) && (
+          <>
+            <button className="secondary" onClick={pay}>
+              <CreditCard size={14} /> Registrar pago
+            </button>
+            <button className="secondary" onClick={() => begin("reprogramar")}>
+              Reprogramar
+            </button>
+            <button
+              className="secondary danger"
+              onClick={() => begin("incobrable")}
+            >
+              Declarar incobrable
+            </button>
+            <button
+              className="secondary danger"
+              onClick={() => begin("anular")}
+            >
+              Anular
+            </button>
+          </>
+        )}
+        {!deleted && loan.estado === "INCOBRABLE" && (
+          <button className="secondary" onClick={() => begin("recuperar")}>
+            Registrar recuperación
+          </button>
+        )}
+        {!deleted && (
+          <button
+            className="secondary danger"
+            onClick={() => begin("eliminar")}
+          >
+            Eliminar
+          </button>
+        )}
+      </div>
+      {action && (
+        <form className="loan-action-form" onSubmit={submit}>
+          <h4>Acción controlada: {action.type}</h4>
+          {action.type === "reprogramar" && (
+            <label>
+              Nueva fecha
+              <input
+                type="date"
+                required
+                value={form.fechaProximoPago}
+                onChange={(e) =>
+                  setForm({ ...form, fechaProximoPago: e.target.value })
+                }
+              />
+            </label>
+          )}
+          {["incobrable", "recuperar", "anular"].includes(action.type) && (
+            <label>
+              Fecha
+              <input
+                type="date"
+                required
+                value={form.fecha}
+                onChange={(e) => setForm({ ...form, fecha: e.target.value })}
+              />
+            </label>
+          )}
+          {action.type === "recuperar" && (
+            <label>
+              Monto
+              <input
+                type="number"
+                required
+                min="0.01"
+                max={Number(loan.saldo_incobrable ?? 0)}
+                step="0.01"
+                value={form.monto}
+                onChange={(e) => setForm({ ...form, monto: e.target.value })}
+              />
+            </label>
+          )}
+          {action.type === "recuperar" ? (
+            <label>
+              Observaciones
+              <textarea
+                maxLength={2000}
+                value={form.observaciones}
+                onChange={(e) =>
+                  setForm({ ...form, observaciones: e.target.value })
+                }
+              />
+            </label>
+          ) : (
+            <label>
+              Motivo obligatorio
+              <textarea
+                required
+                minLength={3}
+                maxLength={2000}
+                value={form.motivo}
+                onChange={(e) => setForm({ ...form, motivo: e.target.value })}
+              />
+            </label>
+          )}
+          <button className="primary" disabled={processing}>
+            {processing ? "Procesando..." : "Confirmar acción"}
+          </button>
+          <button className="secondary" type="button" onClick={cancel}>
+            Cancelar
+          </button>
+        </form>
+      )}
+      <div className="loan-detail-grid">
+        <History
+          title="Intereses por período"
+          rows={detail.intereses}
+          render={(item) => (
+            <>
+              <span>
+                {displayDate(item.fecha_vencimiento)} · base{" "}
+                {formatMoney(item.capital_base as string)}
+              </span>
+              <strong>
+                {formatMoney(item.monto_interes as string)} · pendiente{" "}
+                {formatMoney(item.saldo_pendiente as string)}
+              </strong>
+              {item.cancelado_at && (
+                <em>Cancelado: {String(item.motivo_cancelacion)}</em>
+              )}
+            </>
+          )}
+        />
+        <History
+          title="Pagos operativos"
+          rows={detail.pagos}
+          render={(item) => (
+            <>
+              <span>
+                {displayDate(item.fecha_pago)} ·{" "}
+                {formatMoney(item.monto_total as string)}
+              </span>
+              <strong>
+                Interés {formatMoney(item.monto_interes as string)} · capital{" "}
+                {formatMoney(item.monto_capital as string)}
+              </strong>
+              {item.revertido_at ? (
+                <em>Revertido: {String(item.motivo_reversion)}</em>
+              ) : (
+                !deleted && (
+                  <button
+                    className="text-button"
+                    onClick={() => begin("revertir-pago", String(item.id))}
+                  >
+                    <RotateCcw size={13} /> Revertir
+                  </button>
+                )
+              )}
+            </>
+          )}
+        />
+        <History
+          title="Reprogramaciones"
+          rows={detail.reprogramaciones}
+          render={(item) => (
+            <>
+              {displayDate(item.fecha_anterior)} →{" "}
+              {displayDate(item.fecha_nueva)} · {String(item.motivo)}
+            </>
+          )}
+        />
+        <History
+          title="Recuperaciones"
+          rows={detail.recuperaciones}
+          render={(item) => (
+            <>
+              <span>
+                {displayDate(item.fecha)} · {formatMoney(item.monto as string)}
+              </span>
+              {item.revertido_at ? (
+                <em>Revertida</em>
+              ) : (
+                !deleted && (
+                  <button
+                    className="text-button"
+                    onClick={() =>
+                      begin("revertir-recuperacion", String(item.id))
+                    }
+                  >
+                    <RotateCcw size={13} /> Revertir
+                  </button>
+                )
+              )}
+            </>
+          )}
+        />
+        <History
+          title="Auditoría relacionada"
+          rows={detail.auditoria}
+          render={(item) => <AuditEntry item={item} />}
+        />
+      </div>
+    </section>
+  );
 }
 function AuditEntry({ item }: { item: Row }) {
-  const before = (item.datos_anteriores ?? {}) as Row; const after = (item.datos_nuevos ?? {}) as Row;
-  const changed = (field: string) => before[field] !== undefined && after[field] !== undefined && String(before[field]) !== String(after[field]);
-  const previousInterest = Array.isArray(before.intereses) ? before.intereses.reduce((sum: number, interest: Row) => sum + Number(interest.saldo_pendiente ?? 0), 0) : undefined;
-  return <><strong>{String(item.accion)} · {displayDateTime(item.created_at)} · {String(item.usuario_nombre ?? 'Usuario registrado')}</strong>{after.motivo && <em>Motivo: {String(after.motivo)}</em>}{changed('cliente_id') && <span>Cliente: {String(before.cliente_id)} → {String(after.cliente_id)}</span>}{(changed('socio_id') || changed('custodia_id')) && <span>Socio/fondo: {String(before.socio_id)} / {String(before.custodia_id)} → {String(after.socio_id)} / {String(after.custodia_id)}</span>}{changed('capital_original') && <span>Capital original: {formatMoney(before.capital_original as string)} → {formatMoney(after.capital_original as string)}</span>}{changed('capital_pendiente') && <span>Capital pendiente: {formatMoney(before.capital_pendiente as string)} → {formatMoney(after.capital_pendiente as string)}</span>}{changed('tasa_mensual') && <span>Tasa mensual: {String(before.tasa_mensual)}% → {String(after.tasa_mensual)}%</span>}{after.interesPendiente !== undefined && <span>Interés pendiente: {formatMoney(previousInterest ?? 0)} → {formatMoney(after.interesPendiente as string)}</span>}{changed('fecha_desembolso') && <span>Desembolso: {displayDate(before.fecha_desembolso)} → {displayDate(after.fecha_desembolso)}</span>}{changed('fecha_proximo_pago') && <span>Próxima fecha: {displayDate(before.fecha_proximo_pago)} → {displayDate(after.fecha_proximo_pago)}</span>}{after.capitalDevuelto !== undefined && <span>Capital devuelto al fondo: {formatMoney(after.capitalDevuelto as string)}</span>}</>;
+  const before = (item.datos_anteriores ?? {}) as Row;
+  const after = (item.datos_nuevos ?? {}) as Row;
+  const changed = (field: string) =>
+    before[field] !== undefined &&
+    after[field] !== undefined &&
+    String(before[field]) !== String(after[field]);
+  const previousInterest = Array.isArray(before.intereses)
+    ? before.intereses.reduce(
+        (sum: number, interest: Row) =>
+          sum + Number(interest.saldo_pendiente ?? 0),
+        0,
+      )
+    : undefined;
+  return (
+    <>
+      <strong>
+        {String(item.accion)} · {displayDateTime(item.created_at)} ·{" "}
+        {String(item.usuario_nombre ?? "Usuario registrado")}
+      </strong>
+      {after.motivo && <em>Motivo: {String(after.motivo)}</em>}
+      {changed("cliente_id") && (
+        <span>
+          Cliente: {String(before.cliente_id)} → {String(after.cliente_id)}
+        </span>
+      )}
+      {(changed("socio_id") || changed("custodia_id")) && (
+        <span>
+          Socio/fondo: {String(before.socio_id)} / {String(before.custodia_id)}{" "}
+          → {String(after.socio_id)} / {String(after.custodia_id)}
+        </span>
+      )}
+      {changed("capital_original") && (
+        <span>
+          Capital original: {formatMoney(before.capital_original as string)} →{" "}
+          {formatMoney(after.capital_original as string)}
+        </span>
+      )}
+      {changed("capital_pendiente") && (
+        <span>
+          Capital pendiente: {formatMoney(before.capital_pendiente as string)} →{" "}
+          {formatMoney(after.capital_pendiente as string)}
+        </span>
+      )}
+      {changed("tasa_mensual") && (
+        <span>
+          Tasa mensual: {String(before.tasa_mensual)}% →{" "}
+          {String(after.tasa_mensual)}%
+        </span>
+      )}
+      {after.interesPendiente !== undefined && (
+        <span>
+          Interés pendiente: {formatMoney(previousInterest ?? 0)} →{" "}
+          {formatMoney(after.interesPendiente as string)}
+        </span>
+      )}
+      {changed("fecha_desembolso") && (
+        <span>
+          Desembolso: {displayDate(before.fecha_desembolso)} →{" "}
+          {displayDate(after.fecha_desembolso)}
+        </span>
+      )}
+      {changed("fecha_proximo_pago") && (
+        <span>
+          Próxima fecha: {displayDate(before.fecha_proximo_pago)} →{" "}
+          {displayDate(after.fecha_proximo_pago)}
+        </span>
+      )}
+      {after.capitalDevuelto !== undefined && (
+        <span>
+          Capital devuelto al fondo:{" "}
+          {formatMoney(after.capitalDevuelto as string)}
+        </span>
+      )}
+    </>
+  );
 }
-function History({ title, rows, render }: { title: string; rows: Row[]; render: (row: Row) => React.ReactNode }) { return <section><h4>{title}</h4>{rows.length ? rows.map((row) => <div className="history-row" key={String(row.id)}>{render(row)}</div>) : <p className="history-empty">Sin registros.</p>}</section>; }
+function History({
+  title,
+  rows,
+  render,
+}: {
+  title: string;
+  rows: Row[];
+  render: (row: Row) => React.ReactNode;
+}) {
+  return (
+    <section>
+      <h4>{title}</h4>
+      {rows.length ? (
+        rows.map((row) => (
+          <div className="history-row" key={String(row.id)}>
+            {render(row)}
+          </div>
+        ))
+      ) : (
+        <p className="history-empty">Sin registros.</p>
+      )}
+    </section>
+  );
+}
