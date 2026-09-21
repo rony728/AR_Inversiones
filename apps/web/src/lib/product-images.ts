@@ -52,3 +52,10 @@ export function clearProductImageCache(productId: string) {
     imageUrls.delete(key);
   }
 }
+
+export function clearAllProductImageCache() {
+  for (const [key, pending] of imageUrls) {
+    void pending.then((url) => URL.revokeObjectURL(url)).catch(() => undefined);
+    imageUrls.delete(key);
+  }
+}

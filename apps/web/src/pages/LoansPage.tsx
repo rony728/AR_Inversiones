@@ -80,6 +80,12 @@ const initialLoan = () => ({
   fechaProximoPago: addLoanMonth(today()),
   observaciones: "",
 });
+const initialPayment = (prestamoId = "") => ({
+  prestamoId,
+  monto: "",
+  montoExtra: "",
+  fechaPago: today(),
+});
 const states: Array<"TODOS" | LoanState> = [
   "TODOS",
   "ACTIVO",
@@ -190,12 +196,7 @@ export function LoansPage() {
   const processingRef = useRef(false);
   const [loanForm, setLoanForm] = useState(initialLoan);
   const [nextDateManual, setNextDateManual] = useState(false);
-  const [payment, setPayment] = useState({
-    prestamoId: "",
-    monto: "",
-    montoExtra: "",
-    fechaPago: today(),
-  });
+  const [payment, setPayment] = useState(initialPayment);
   const [settlement, setSettlement] = useState<Settlement | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [detailId, setDetailId] = useState("");
@@ -211,7 +212,7 @@ export function LoansPage() {
     observaciones: "",
   });
   const [correction, setCorrection] = useState<LoanCorrection | null>(null);
-  const loanModalOpen = Boolean(detail || (panel === "editar" && correction));
+  const loanModalOpen = Boolean(detail || panel === "pago" || (panel === "editar" && correction));
 
   async function load() {
     setSource("loading");
@@ -479,12 +480,7 @@ export function LoansPage() {
           "Pago guardado pendiente de sincronización; aún no está confirmado por el servidor.",
         );
       }
-      setPayment({
-        prestamoId: "",
-        monto: "",
-        montoExtra: "",
-        fechaPago: today(),
-      });
+      setPayment(initialPayment());
       setPanel(null);
     });
   }
@@ -597,13 +593,20 @@ export function LoansPage() {
   }
   function beginPayment(loan: LoanRow) {
     setDetail(null);
-    setPayment({
-      prestamoId: loan.id,
-      monto: "",
-      montoExtra: "",
-      fechaPago: today(),
-    });
+    setPayment(initialPayment(loan.id));
     setPanel("pago");
+    setError("");
+  }
+  function openPayment() {
+    setPayment(initialPayment());
+    setPanel("pago");
+    setError("");
+    setMessage("");
+  }
+  function closePayment() {
+    setPayment(initialPayment());
+    setSettlement(null);
+    setPanel(null);
     setError("");
   }
   function beginAction(type: Action, targetId?: string) {
@@ -705,7 +708,7 @@ export function LoansPage() {
           <button
             className="secondary"
             disabled={source === "error"}
-            onClick={() => setPanel("pago")}
+            onClick={openPayment}
           >
             <CreditCard size={16} /> Registrar pago
           </button>
@@ -924,10 +927,11 @@ export function LoansPage() {
         </form>
       )}
       {panel === "pago" && (
+        <LoanModal label="Registrar pago" variant="form" error={error} onClose={closePayment}>
         <form className="panel loan-operation-form payment-form" onSubmit={pay}>
           <PanelHead
             title="Registrar pago"
-            close={() => setPanel(null)}
+            close={closePayment}
             subtitle="El servidor recalcula la liquidación con datos bloqueados."
           />
           <label>
@@ -999,12 +1003,13 @@ export function LoansPage() {
             {processing ? "Aplicando pago..." : "Aplicar pago"}
           </button>
         </form>
+        </LoanModal>
       )}
       {panel === "historicos" && (
         <Historical rows={historic} close={() => setPanel(null)} />
       )}
       {panel === "editar" && correction && (
-        <LoanModal label="Editar préstamo" variant="form" error={error}>
+        <LoanModal label="Editar préstamo" variant="form" error={error} onClose={() => { setPanel(null); setCorrection(null); setError(""); }}>
           <form
             className="panel loan-operation-form"
             onSubmit={submitCorrection}
@@ -1453,6 +1458,7 @@ export function LoansPage() {
         <LoanModal
           label={`Detalle del préstamo de ${detail.prestamo.cliente}`}
           error={error}
+          onClose={() => { setDetail(null); setAction(null); setError(""); }}
         >
           <LoanDetail
             detail={detail}
@@ -1477,20 +1483,28 @@ function LoanModal({
   children,
   label,
   error,
+  onClose,
   variant = "detail",
 }: {
   children: React.ReactNode;
   label: string;
   error?: string;
+  onClose: () => void;
   variant?: "detail" | "form";
 }) {
+  useEffect(() => {
+    const closeEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    document.addEventListener("keydown", closeEscape);
+    return () => document.removeEventListener("keydown", closeEscape);
+  }, [onClose]);
   return createPortal(
-    <div className="loan-modal-overlay">
+    <div className="loan-modal-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div
         className={`loan-modal-content loan-modal-${variant}`}
         role="dialog"
         aria-modal="true"
         aria-label={label}
+        onMouseDown={(event) => event.stopPropagation()}
       >
         {error && <p className="purchase-warning loan-modal-error">{error}</p>}
         {children}

@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OperationalStatus } from '../lib/operational-status';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const mocks = vi.hoisted(() => ({ production: false, status: {} as OperationalStatus }));
-vi.mock('../lib/api', () => ({ isProductionApiUrl: () => mocks.production }));
+const mocks = vi.hoisted(() => ({ badge: 'PRUEBAS' as string | null, status: {} as OperationalStatus }));
+vi.mock('../lib/api', () => ({ getApiEnvironmentBadge: () => mocks.badge }));
 vi.mock('../lib/operational-status', () => ({ useOperationalStatus: () => mocks.status, formatLastSync: () => 'Sincronizado hace 20 s' }));
 import { Shell } from './Shell';
 
@@ -16,7 +16,7 @@ const baseStatus: OperationalStatus = { mode: 'online', pending: 0, lastSyncedAt
 describe('cabecera operativa', () => {
   let container: HTMLDivElement; let root: ReturnType<typeof createRoot>;
   async function render(status: OperationalStatus = baseStatus) { mocks.status = status; await act(async () => root.render(<MemoryRouter><Shell userName="Rony Turcios" onLogout={vi.fn()}><p>Contenido</p></Shell></MemoryRouter>)); }
-  beforeEach(() => { mocks.production = false; container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container); });
+  beforeEach(() => { mocks.badge = 'PRUEBAS'; container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container); });
   afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
 
   it('muestra En línea, PRUEBAS y omite pendientes cuando son cero', async () => {
@@ -30,7 +30,11 @@ describe('cabecera operativa', () => {
   });
 
   it('no muestra PRUEBAS cuando utiliza la API productiva', async () => {
-    mocks.production = true; await render(); expect(container.querySelector('.topbar')!.textContent).not.toContain('PRUEBAS');
+    mocks.badge = null; await render(); expect(container.querySelector('.topbar')!.textContent).not.toContain('PRUEBAS');
+  });
+
+  it('muestra PERSONALIZADA cuando la configuración runtime lo indica', async () => {
+    mocks.badge = 'PERSONALIZADA'; await render(); expect(container.querySelector('.topbar')!.textContent).toContain('PERSONALIZADA');
   });
 
   it('abre el popover con nombres y cierra con Escape, clic fuera o navegación', async () => {

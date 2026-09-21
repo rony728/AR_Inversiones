@@ -15,7 +15,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
-import { isProductionApiUrl } from "../lib/api";
+import { getApiEnvironmentBadge } from "../lib/api";
 import {
   formatLastSync,
   useOperationalStatus,
@@ -52,6 +52,7 @@ export function Shell({
   const presenceRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
   const status = useOperationalStatus();
+  const environmentBadge = getApiEnvironmentBadge();
   const statusLabel =
     status.mode === "online"
       ? "En línea"
@@ -142,9 +143,7 @@ export function Shell({
             <h1>Control empresarial</h1>
           </div>
           <div className="topbar-operations" aria-live="polite">
-            {!isProductionApiUrl() && (
-              <span className="environment-badge">PRUEBAS</span>
-            )}
+            {environmentBadge && <span className="environment-badge">{environmentBadge}</span>}
             <span className={`connection-state ${status.mode}`}>
               <Activity size={14} /> {statusLabel}
             </span>

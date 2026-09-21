@@ -66,6 +66,17 @@ for (const [name, current, next, difference] of [['positivo', 3000, 3250, '250.0
   assert.equal(result.diferencia, difference); assert.equal(db.funds.get(alexLoans)?.saldo_actual, Number(next).toFixed(2)); assert.equal(db.calls.some((call) => call.sql.includes('AJUSTE_MANUAL_FONDO')), true); assert.equal(db.calls.some((call) => call.sql.includes('INSERT INTO movimientos_financieros')), false);
 });
 
+for (const [name, current, next] of [['cero a negativo', 0, -3000], ['positivo a negativo', 1000, -500], ['negativo a más negativo', -500, -900], ['negativo a cero', -900, 0], ['negativo a positivo', -900, 700]] as const) test(`permite ajuste manual de ${name}`, async () => {
+  const db = custodyClient({ [alexLoans]: current });
+  const result = await adjustFundBalance(db.client as never, fundAdjustmentInput.parse({ socioId: alex, custodiaId: alexLoans, nuevoSaldo: next, motivo: 'Corrección manual verificada' }), 'user-1');
+  assert.equal(Number(result.saldoAnterior), current);
+  assert.equal(Number(result.saldoNuevo), next);
+  assert.equal(Number(result.diferencia), next - current);
+  assert.equal(db.calls.filter((call) => call.sql.startsWith('INSERT INTO ajustes_fondo')).length, 1);
+  assert.equal(db.calls.filter((call) => call.sql.includes("'AJUSTE_MANUAL_FONDO'")).length >= 1, true);
+  assert.equal(db.calls.some((call) => call.sql.includes('INSERT INTO auditoria_sistema')), true);
+});
+
 test('acepta saldo negativo y rechaza saldo sin cambio y motivo inválido', async () => {
   assert.equal(fundAdjustmentInput.safeParse({ socioId: alex, custodiaId: alexLoans, nuevoSaldo: -1, motivo: 'Corrección' }).success, true);
   assert.equal(fundAdjustmentInput.safeParse({ socioId: alex, custodiaId: alexLoans, nuevoSaldo: 10, motivo: 'No' }).success, false);

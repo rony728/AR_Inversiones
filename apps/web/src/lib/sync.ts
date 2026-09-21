@@ -46,4 +46,5 @@ export async function synchronizePending() {
 }
 
 export function beginSyncListener() { const attempt = () => void synchronizePending(); window.addEventListener('online', attempt); attempt(); return () => window.removeEventListener('online', attempt); }
+export function resetLocalSyncState() { try { localStorage.removeItem(LAST_SYNC_KEY); } catch { /* La limpieza de IndexedDB continúa. */ } updateSyncSnapshot({ syncing: false, lastSyncedAt: null }); }
 export type { QueuedOperation };

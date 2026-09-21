@@ -1,11 +1,10 @@
-export const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api/v1';
-export const PRODUCTION_API_URL = 'https://api-ar-inversiones.rtdev.uk/api/v1';
-export const isProductionApiUrl = (url = API_URL) => url.replace(/\/+$/, '') === PRODUCTION_API_URL;
+import { getActiveApiBaseUrl } from './api-runtime';
+export { getActiveApiBaseUrl, getActiveApiConfig, getApiEnvironmentBadge, isProductionApiUrl, PRODUCTION_API_URL } from './api-runtime';
 
 export type ApiResponse<T> = { data: T };
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = sessionStorage.getItem('ar-token');
-  const response = await fetch(`${API_URL}${path}`, {
+  const response = await fetch(`${getActiveApiBaseUrl()}${path}`, {
     ...options,
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers }
   });
@@ -16,7 +15,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
 
 export async function apiBlob(path: string): Promise<Blob> {
   const token = sessionStorage.getItem('ar-token');
-  const response = await fetch(`${API_URL}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
+  const response = await fetch(`${getActiveApiBaseUrl()}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { message?: string };
     throw new Error(body.message ?? 'No se pudo cargar la imagen.');

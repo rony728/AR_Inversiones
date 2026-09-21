@@ -150,6 +150,20 @@ td { color: var(--text-main); }
 .settings-list div { flex: 1; }
 .settings-list h3 { margin: 0; font-family: var(--font-heading); font-size: 15px; font-weight: 700; }
 .settings-list p { margin: 4px 0 0; color: var(--text-muted); font-size: 13px; }
+.api-connection { display: grid; gap: 16px; max-width: 900px; margin-top: 20px; }
+.api-connection .panel-head h3 { display: flex; align-items: center; gap: 8px; }
+.api-current { display: grid; grid-template-columns: .8fr 2fr .8fr; gap: 10px; }
+.api-current span, .api-production-url { min-width: 0; padding: 11px 13px; border: 1px solid var(--border-color); border-radius: 9px; background: var(--bg-subtle); color: var(--text-muted); font-size: 11px; }
+.api-current strong { display: block; margin-top: 4px; color: var(--text-main); overflow-wrap: anywhere; }
+.api-current .connection-ok { color: #157347; }
+.api-current .connection-error { color: #b42318; }
+.api-environment-options, .api-actions { display: flex; gap: 9px; flex-wrap: wrap; }
+.api-environment-options .active { border-color: var(--primary); background: var(--primary-subtle); color: var(--primary); }
+.api-connection > label { display: grid; gap: 7px; color: #526b8a; font-size: 12px; font-weight: 700; }
+.api-connection > label input { min-width: 0; width: 100%; border: 1px solid #dce5ef; border-radius: 7px; padding: 10px 12px; background: #fff; color: #263f60; font: inherit; }
+.api-production-url { color: var(--text-main); overflow-wrap: anywhere; }
+.api-connection > small { color: var(--text-muted); }
+@media(max-width:700px){.api-current{grid-template-columns:1fr}.api-environment-options,.api-actions{display:grid;grid-template-columns:1fr}.api-environment-options button,.api-actions button{min-height:44px;justify-content:center}}
 .login { min-height: 100vh; display: grid; grid-template-columns: 1fr 1fr; background: #fff; }
 .login > section { background: #0f2337; color: #f8fafc; padding: clamp(48px, 7vw, 110px); display: flex; flex-direction: column; justify-content: center; }
 .login-brand { font-family: var(--font-heading); font-size: 20px; display: flex; gap: 10px; align-items: center; color: #ffffff; font-weight: 700; }

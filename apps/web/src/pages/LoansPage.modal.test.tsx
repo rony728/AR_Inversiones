@@ -24,16 +24,20 @@ const partnerRows = (balances: Record<string, number>) => [
 
 async function flush() { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); }); }
 function setText(element: HTMLTextAreaElement, value: string) { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(element, value); element.dispatchEvent(new Event('input', { bubbles: true })); }
+function setInput(element: HTMLInputElement, value: string) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(element, value); element.dispatchEvent(new Event('input', { bubbles: true })); }
 
 describe('modales de préstamos', () => {
-  let container: HTMLDivElement; let root: ReturnType<typeof createRoot>; let deletedIds: Set<string>; let loanBalances: Record<string, number>;
+  let container: HTMLDivElement; let root: ReturnType<typeof createRoot>; let deletedIds: Set<string>; let loanBalances: Record<string, number>; let failPayment: boolean;
   beforeEach(async () => {
     deletedIds = new Set();
+    failPayment = false;
     loanBalances = { Alex: 1005, Brian: 5911, Rony: 3000 };
     apiMock.mockImplementation(async (path: string, options?: { method?: string }) => {
       if (path === '/prestamos') return { data: loans.map((loan) => deletedIds.has(loan.id) ? { ...loan, eliminado_at: '2026-09-11T12:00:00Z', estado_antes_eliminacion: loan.estado, motivo_eliminacion: 'Duplicado de migración' } : loan) };
       if (path === '/catalogo/clientes') return { data: [{ id: clientId, nombre: 'Cliente', activo: true }] };
       if (path === '/catalogo/socios') return { data: partnerRows(loanBalances) };
+      if (/^\/prestamos\/loan-\d\/liquidacion\?/.test(path)) return { data: { capitalPendiente: 800, interesesPendientes: 120, periodosPendientes: 1, pagoMinimo: 120, totalMaximo: 920, proximaFecha: '2026-10-11', estadoActual: 'ACTIVO' } };
+      if (/^\/prestamos\/loan-\d\/pagos$/.test(path) && options?.method === 'POST') { if (failPayment) throw new Error('No se pudo aplicar el pago.'); return { data: { interes: '120.00', capital: '0.00', montoExtra: '25.00', totalRecibido: '145.00', capitalRestante: '800.00', estado: 'ACTIVO' } }; }
       if (/^\/prestamos\/loan-\d$/.test(path) && options?.method === 'PATCH') { loanBalances.Rony = 2800; return { data: loans[Number(path.at(-1)) - 1] }; }
       if (/^\/prestamos\/loan-\d\/eliminar$/.test(path) && options?.method === 'POST') { deletedIds.add(path.split('/')[2]); return { data: { id: path.split('/')[2] } }; }
       if (/^\/prestamos\/loan-\d$/.test(path)) { const value = detail(Number(path.at(-1)) - 1); return { data: deletedIds.has(value.prestamo.id) ? { ...value, prestamo: { ...value.prestamo, eliminado_at: '2026-09-11T12:00:00Z', estado_antes_eliminacion: value.prestamo.estado, motivo_eliminacion: 'Duplicado de migración' } } : value }; }
@@ -113,6 +117,46 @@ describe('modales de préstamos', () => {
     const viewButtons = [...container.querySelectorAll('button')].filter((button) => button.textContent?.includes('Ver'));
     await act(async () => { (viewButtons[0] as HTMLButtonElement).click(); }); await flush();
     expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Intereses por período');
+  });
+
+  it('abre Registrar pago limpio y cierra por X, Escape y overlay restaurando el scroll', async () => {
+    const open = [...container.querySelectorAll('button')].find((button) => button.textContent?.includes('Registrar pago')) as HTMLButtonElement;
+    await act(async () => open.click());
+    let dialog = document.body.querySelector('[role="dialog"]')!;
+    expect(dialog.getAttribute('aria-label')).toBe('Registrar pago'); expect(document.body.style.overflow).toBe('hidden');
+    const amounts = dialog.querySelectorAll('input[type="number"]'); expect((amounts[0] as HTMLInputElement).value).toBe(''); expect((amounts[1] as HTMLInputElement).value).toBe('');
+    await act(async () => (dialog.querySelector('.close-button') as HTMLButtonElement).click()); expect(document.body.querySelector('[role="dialog"]')).toBeNull(); expect(document.body.style.overflow).toBe('');
+    await act(async () => open.click()); await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))); expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    await act(async () => open.click()); const overlay = document.body.querySelector('.loan-modal-overlay') as HTMLDivElement; await act(async () => overlay.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))); expect(document.body.querySelector('[role="dialog"]')).toBeNull(); expect(window.scrollTo).toHaveBeenCalled();
+  });
+
+  it('conserva el submit y el monto extra dentro del modal contextual', async () => {
+    const payButton = [...container.querySelectorAll('.mobile-record-actions button')].find((button) => button.textContent?.includes('Pago')) as HTMLButtonElement;
+    await act(async () => payButton.click());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+    await vi.waitFor(() => expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Total recibido'));
+    const dialog = document.body.querySelector('[role="dialog"]')!; const amounts = dialog.querySelectorAll('input[type="number"]');
+    await act(async () => setInput(amounts[0] as HTMLInputElement, '120'));
+    await act(async () => setInput(amounts[1] as HTMLInputElement, '25'));
+    await vi.waitFor(() => expect(dialog.textContent).toContain('L 145.00'));
+    const submit = [...dialog.querySelectorAll('button')].find((button) => button.textContent?.includes('Aplicar pago')) as HTMLButtonElement;
+    expect(submit.type).toBe('submit'); await vi.waitFor(() => expect(submit.disabled).toBe(false)); await act(async () => (dialog.querySelector('form') as HTMLFormElement).dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await vi.waitFor(() => expect(apiMock.mock.calls.some(([path, options]) => /^\/prestamos\/loan-\d\/pagos$/.test(path) && options?.method === 'POST')).toBe(true));
+    const call = apiMock.mock.calls.find(([path, options]) => /^\/prestamos\/loan-\d\/pagos$/.test(path) && options?.method === 'POST');
+    expect(JSON.parse(call![1].body)).toMatchObject({ monto: 120, montoExtra: 25 });
+    expect(container.textContent).toContain('Total recibido: L 145.00');
+  });
+
+  it('muestra el error del pago dentro del modal y limpia datos al reabrir', async () => {
+    const payButton = [...container.querySelectorAll('.mobile-record-actions button')].find((button) => button.textContent?.includes('Pago')) as HTMLButtonElement;
+    await act(async () => payButton.click()); await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); }); await vi.waitFor(() => expect(document.body.querySelector('[role="dialog"]')).toBeTruthy());
+    let dialog = document.body.querySelector('[role="dialog"]')!; const amounts = dialog.querySelectorAll('input[type="number"]');
+    await act(async () => setInput(amounts[0] as HTMLInputElement, '120')); failPayment = true;
+    const submit = [...dialog.querySelectorAll('button')].find((button) => button.textContent?.includes('Aplicar pago')) as HTMLButtonElement;
+    await vi.waitFor(() => expect(submit.disabled).toBe(false)); await act(async () => submit.click()); await vi.waitFor(() => expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('No se pudo aplicar el pago.'));
+    await act(async () => (document.body.querySelector('.close-button') as HTMLButtonElement).click());
+    const open = [...container.querySelectorAll('button')].find((button) => button.textContent?.includes('Registrar pago')) as HTMLButtonElement; await act(async () => open.click());
+    dialog = document.body.querySelector('[role="dialog"]')!; expect((dialog.querySelector('input[type="number"]') as HTMLInputElement).value).toBe(''); expect(dialog.textContent).not.toContain('No se pudo aplicar el pago.');
   });
 
   it('retira un préstamo nuevo y lo conserva consultable sin acciones operativas', async () => {

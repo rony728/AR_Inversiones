@@ -9,3 +9,12 @@ test('IndexedDB conserva una operación pendiente y una copia local', async () =
   expect((await getCachedList('productos')).length).toBe(2);
   expect(await pendingCount()).toBe(1);
 });
+
+test('la limpieza por cambio de servidor elimina copias sincronizadas y permite abrir una base nueva', async () => {
+  await resetOfflineDatabase();
+  await cacheList('clientes', [{ id: '33333333-3333-4333-8333-333333333333', nombre: 'Servidor anterior' }]);
+  expect(await getCachedList('clientes')).toHaveLength(1);
+  await resetOfflineDatabase();
+  expect(await getCachedList('clientes')).toEqual([]);
+  expect(await pendingCount()).toBe(0);
+});
