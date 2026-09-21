@@ -134,6 +134,18 @@ export function paymentEstimate(
     remaining: (cents(capital) - capitalPaid) / 100,
   } as const;
 }
+export function loanPaymentApiPayload(input: {
+  prestamoId: string;
+  fechaPago: string;
+  monto: number;
+  montoExtra?: number;
+}) {
+  return {
+    fechaPago: input.fechaPago,
+    monto: input.monto,
+    montoExtra: input.montoExtra ?? 0,
+  };
+}
 export function addLoanMonth(date: string) {
   const [year, month, day] = date.split("-").map(Number);
   const nextMonth = month === 12 ? 1 : month + 1;

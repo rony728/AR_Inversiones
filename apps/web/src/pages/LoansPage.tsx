@@ -16,6 +16,7 @@ import {
   addLoanMonth,
   effectiveLoanState,
   filterLoans,
+  loanPaymentApiPayload,
   loanDueAlert,
   loanSummary,
   paymentEstimate,
@@ -460,7 +461,7 @@ export function LoansPage() {
           };
         }>(`/prestamos/${payment.prestamoId}/pagos`, {
           method: "POST",
-          body: JSON.stringify(payload),
+          body: JSON.stringify(loanPaymentApiPayload(payload)),
         });
         setMessage(
           `Pago aplicado: ${formatMoney(result.data.interes)} a interés, ${formatMoney(result.data.capital)} a capital y ${formatMoney(result.data.montoExtra)} extra. Total recibido: ${formatMoney(result.data.totalRecibido)}.`,

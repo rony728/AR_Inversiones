@@ -219,8 +219,8 @@ export function Custodias() {
       );
       return;
     }
-    if (Number(newBalance) < 0 || !newBalance) {
-      setMessage("El nuevo saldo debe ser mayor o igual que cero.");
+    if (!newBalance.trim() || !Number.isFinite(Number(newBalance))) {
+      setMessage("Ingresa un saldo válido.");
       return;
     }
     if (adjustmentDifference === 0) {
@@ -300,7 +300,15 @@ export function Custodias() {
                       ? "Productos"
                       : "Préstamos"}
                   </span>
-                  <strong>{formatMoney(custody.saldo_actual)}</strong>
+                  <strong
+                    className={
+                      Number(custody.saldo_actual) < 0
+                        ? "fund-balance-negative"
+                        : undefined
+                    }
+                  >
+                    {formatMoney(custody.saldo_actual)}
+                  </strong>
                 </div>
                 <button
                   type="button"
@@ -449,6 +457,7 @@ export function Custodias() {
                 onChange={(event) => setNewBalance(event.target.value)}
                 required
               />
+              <small>El saldo puede ser positivo, cero o negativo.</small>
             </label>
             <div
               className={`fund-adjustment-preview ${adjustmentDifference < 0 ? "decrease" : adjustmentDifference > 0 ? "increase" : ""}`}

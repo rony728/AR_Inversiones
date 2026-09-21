@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { previewLoanPayment, registerLoanPayment, reverseLoanPayment } from '../src/modules/operations/loan-service.js';
+import { paymentInput, previewLoanPayment, registerLoanPayment, reverseLoanPayment } from '../src/modules/operations/loan-service.js';
 
 type InterestState = { id: string; fecha_vencimiento: string; capital_base: string; monto_interes: string; saldo_pendiente: string; generado_por_pago_id: string | null; cancelado_at: string | null; cancelado_por_reversion_pago_id: string | null };
 type PaymentState = { id: string; monto_total: string; monto_extra?: string; monto_capital: string; fecha_pago: string; estado_prestamo_anterior: 'ACTIVO' | 'VENCIDO'; fecha_proximo_pago_anterior: string; revertido_at: string | null; order: number };
@@ -12,6 +12,7 @@ class LoanMemoryClient {
   payments: PaymentState[] = [];
   allocations: Array<{ pago_prestamo_id: string; interes_prestamo_id: string; monto_aplicado: string }> = [];
   custodyMovements = 0;
+  financialMovements: string[] = [];
 
   async query(sql: string, values: unknown[] = []) {
     if (sql.startsWith('SELECT id,cliente_id,socio_id')) return { rows: [{ ...this.loan }] };
@@ -26,6 +27,7 @@ class LoanMemoryClient {
     if (sql.startsWith('SELECT saldo_actual FROM custodias')) return { rows: [{ saldo_actual: this.custody.toFixed(2) }] };
     if (sql.startsWith('UPDATE custodias SET saldo_actual=')) { this.custody = Number(values[0]); return { rows: [] }; }
     if (sql.includes('INSERT INTO movimientos_custodia')) { this.custodyMovements++; return { rows: [] }; }
+    if (sql.startsWith('INSERT INTO movimientos_financieros')) { this.financialMovements.push(sql); return { rows: [] }; }
     if (sql.startsWith('SELECT id,monto_total,monto_capital,fecha_pago')) { const found = this.payments.find((payment) => payment.id === values[0]); return { rows: found ? [{ ...found }] : [] }; }
     if (sql.startsWith('SELECT id FROM pagos_prestamo WHERE prestamo_id')) { const current = this.payments.find((payment) => payment.id === values[1])!; return { rows: this.payments.filter((payment) => !payment.revertido_at && payment.order > current.order).slice(0, 1) }; }
     if (sql.startsWith('SELECT interes_prestamo_id,monto_aplicado')) return { rows: this.allocations.filter((allocation) => allocation.pago_prestamo_id === values[0]).map((allocation) => ({ ...allocation })) };
@@ -39,6 +41,13 @@ class LoanMemoryClient {
 
   pendingInterest() { return this.interests.filter((item) => !item.cancelado_at).reduce((sum, item) => sum + Number(item.saldo_pendiente), 0); }
 }
+
+test('contrato HTTP de pago acepta extra opcional y rechaza prestamoId duplicado en el cuerpo', () => {
+  assert.deepEqual(paymentInput.parse({ fechaPago: '2026-09-20', monto: 200 }), { fechaPago: '2026-09-20', monto: 200, montoExtra: 0 });
+  const invalid = paymentInput.safeParse({ prestamoId: 'loan-1', fechaPago: '2026-09-20', monto: 200, montoExtra: 0 });
+  assert.equal(invalid.success, false);
+  if (!invalid.success) assert.equal(invalid.error.issues[0]?.code, 'unrecognized_keys');
+});
 
 test('revertir un pago solo de interés restaura el período original y cancela únicamente el siguiente', async () => {
   const db = new LoanMemoryClient();
@@ -78,6 +87,39 @@ test('monto extra se acredita al fondo sin reducir capital ni interés', async (
   assert.equal(payment.montoExtra, '50.00');
   assert.equal(payment.totalRecibido, '200.00');
   assert.equal(db.custody, 1200);
+  assert.equal(db.financialMovements.filter((sql) => sql.includes('INGRESO_EXTRA_PRESTAMO')).length, 1);
+});
+
+test('pago con extra cero conserva la aplicación previa y no crea ingreso extra', async () => {
+  const db = new LoanMemoryClient();
+  db.loan.capital_pendiente = '1300.00';
+  db.interests[0] = { ...db.interests[0], capital_base: '1300.00', monto_interes: '195.00', saldo_pendiente: '195.00' };
+  const payment = await registerLoanPayment(db as never, db.loan.id, paymentInput.parse({ fechaPago: '2026-09-20', monto: 200, montoExtra: 0 }));
+  assert.deepEqual({ interes: payment.interes, capital: payment.capital, capitalRestante: payment.capitalRestante, montoExtra: payment.montoExtra, totalRecibido: payment.totalRecibido }, { interes: '195.00', capital: '5.00', capitalRestante: '1295.00', montoExtra: '0.00', totalRecibido: '200.00' });
+  assert.equal(db.custody, 1200);
+  assert.equal(db.financialMovements.some((sql) => sql.includes('INGRESO_EXTRA_PRESTAMO')), false);
+});
+
+test('monto extra omitido se interpreta como cero', async () => {
+  const parsed = paymentInput.parse({ fechaPago: '2026-09-20', monto: 150 });
+  assert.equal(parsed.montoExtra, 0);
+  const db = new LoanMemoryClient();
+  const payment = await registerLoanPayment(db as never, db.loan.id, parsed);
+  assert.equal(payment.montoExtra, '0.00');
+  assert.equal(payment.totalRecibido, '150.00');
+  assert.equal(db.financialMovements.some((sql) => sql.includes('INGRESO_EXTRA_PRESTAMO')), false);
+});
+
+test('reversión de pago con extra restaura capital, interés y fondo completos', async () => {
+  const db = new LoanMemoryClient();
+  const payment = await registerLoanPayment(db as never, db.loan.id, paymentInput.parse({ fechaPago: '2026-09-20', monto: 350, montoExtra: 50 }));
+  assert.equal(db.loan.capital_pendiente, '800.00');
+  assert.equal(db.custody, 1400);
+  await reverseLoanPayment(db as never, db.loan.id, payment.id, { motivo: 'Corrección del pago extra' });
+  assert.equal(db.loan.capital_pendiente, '1000.00');
+  assert.equal(db.pendingInterest(), 150);
+  assert.equal(db.custody, 1000);
+  assert.equal(db.payments[0].revertido_at, 'now');
 });
 
 test('liquidación total deja el préstamo pagado y no genera otro interés', async () => {

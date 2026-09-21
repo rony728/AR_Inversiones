@@ -759,6 +759,7 @@ export async function registerLoanPayment(
     interestTotal,
     input.monto,
   );
+  const extraCents = toCents(input.montoExtra ?? 0);
   const payment = await client.query<{ id: string }>(
     `INSERT INTO pagos_prestamo (prestamo_id,custodia_id,fecha_pago,monto_total,monto_extra,monto_interes,monto_capital,saldo_capital_anterior,saldo_capital_posterior,created_by,estado_prestamo_anterior,fecha_proximo_pago_anterior) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
     [
@@ -766,7 +767,7 @@ export async function registerLoanPayment(
       loan.custodia_id,
       input.fechaPago,
       money(toCents(input.monto)),
-      money(toCents(input.montoExtra)),
+      money(extraCents),
       part.interes,
       part.capital,
       money(toCents(Number(loan.capital_pendiente))),
@@ -816,7 +817,7 @@ export async function registerLoanPayment(
     loan.custodia_id,
     loan.socio_id,
   );
-  const totalReceivedCents = toCents(input.monto) + toCents(input.montoExtra);
+  const totalReceivedCents = toCents(input.monto) + extraCents;
   const after = money(toCents(custodyBalance) + totalReceivedCents);
   await client.query("UPDATE custodias SET saldo_actual=$1 WHERE id=$2", [
     after,
@@ -843,10 +844,10 @@ export async function registerLoanPayment(
       `INSERT INTO movimientos_financieros (tipo,fecha,monto,socio_id,referencia_tipo,referencia_id,descripcion) VALUES ('COBRO_CAPITAL',$1,$2,$3,'PAGO_PRESTAMO',$4,'Recuperación de capital')`,
       [input.fechaPago, part.capital, loan.socio_id, payment.rows[0].id],
     );
-  if (input.montoExtra > 0)
+  if (extraCents > 0)
     await client.query(
       `INSERT INTO movimientos_financieros (tipo,fecha,monto,socio_id,referencia_tipo,referencia_id,descripcion) VALUES ('INGRESO_EXTRA_PRESTAMO',$1,$2,$3,'PAGO_PRESTAMO',$4,'Monto extra voluntario de préstamo')`,
-      [input.fechaPago, money(toCents(input.montoExtra)), loan.socio_id, payment.rows[0].id],
+      [input.fechaPago, money(extraCents), loan.socio_id, payment.rows[0].id],
     );
   await writeAudit(client, {
     usuarioId: userId,
@@ -856,7 +857,7 @@ export async function registerLoanPayment(
     nuevos: {
       prestamoId: loanId,
       ...part,
-      montoExtra: money(toCents(input.montoExtra)),
+      montoExtra: money(extraCents),
       totalRecibido: money(totalReceivedCents),
       estado: state,
       fechaProximoPago: nextDate,
@@ -866,7 +867,7 @@ export async function registerLoanPayment(
   return {
     id: payment.rows[0].id,
     ...part,
-    montoExtra: money(toCents(input.montoExtra)),
+    montoExtra: money(extraCents),
     totalRecibido: money(totalReceivedCents),
     estado: state,
     fechaProximoPago: nextDate,

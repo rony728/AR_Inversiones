@@ -50,4 +50,10 @@ describe('administración de fondos', () => {
     await act(async () => { setValue(input, '1250'); setValue(textarea, 'Diferencia encontrada en efectivo'); }); expect(dialog.textContent).toContain('Aumenta L 250.00'); await act(async () => (dialog.querySelector('form') as HTMLFormElement).requestSubmit()); await flush();
     const request = apiMock.mock.calls.find(([path]) => path === '/ajustes-fondo'); expect(request).toBeTruthy(); expect(JSON.parse(request![1].body)).toMatchObject({ socioId: alex, custodiaId: 'alex-products', nuevoSaldo: 1250, motivo: 'Diferencia encontrada en efectivo' }); expect(container.textContent).toContain('L 1250.00'); expect(apiMock.mock.calls.filter(([path]) => path === '/catalogo/socios').length).toBeGreaterThanOrEqual(2);
   });
+
+  it('permite ajustar a saldo negativo y resalta únicamente el monto negativo', async () => {
+    const adjustButton = [...container.querySelectorAll('button')].find((button) => button.textContent?.includes('Ajustar saldo'))!; await act(async () => (adjustButton as HTMLButtonElement).click()); const dialog = document.body.querySelector('[role="dialog"]')!; const input = dialog.querySelector('input')!; const textarea = dialog.querySelector('textarea')!;
+    expect(input.hasAttribute('min')).toBe(false); expect(dialog.textContent).toContain('positivo, cero o negativo'); await act(async () => { setValue(input, '-3000'); setValue(textarea, 'test de negativo'); }); expect(dialog.textContent).toContain('Disminuye L 4000.00'); await act(async () => (dialog.querySelector('form') as HTMLFormElement).requestSubmit()); await flush();
+    const request = apiMock.mock.calls.find(([path]) => path === '/ajustes-fondo'); expect(request).toBeTruthy(); expect(JSON.parse(request![1].body)).toMatchObject({ socioId: alex, custodiaId: 'alex-products', nuevoSaldo: -3000, motivo: 'test de negativo' }); const negative = container.querySelector('.fund-balance-negative'); expect(negative?.textContent).toContain('-3000.00'); expect(negative?.closest('.custody-card')?.classList.contains('fund-balance-negative')).toBe(false);
+  });
 });
