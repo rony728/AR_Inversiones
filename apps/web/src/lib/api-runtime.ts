@@ -64,10 +64,10 @@ export async function testApiConnection(value: string, request: typeof fetch = f
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const response = await request(`${baseUrl}/health`, { signal: controller.signal, headers: { Accept: 'application/json' } });
+    const response = await request(`${baseUrl}/health`, { signal: controller.signal });
     if (!response.ok) throw new Error('La API no respondió correctamente.');
     return baseUrl;
   } catch {
-    throw new Error('No se pudo conectar con esta API.');
+    throw new Error('No se pudo verificar esta API desde este origen. El servidor puede estar disponible, pero este navegador podría no tener permiso CORS.');
   } finally { clearTimeout(timeout); }
 }

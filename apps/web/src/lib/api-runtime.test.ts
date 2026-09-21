@@ -35,7 +35,9 @@ describe('API activa en runtime', () => {
     saveApiRuntimeSettings({ active: 'PRODUCCION' });
     const request = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
     await expect(testApiConnection('https://tests.example/api/v1/', request)).resolves.toBe('https://tests.example/api/v1');
-    expect(request).toHaveBeenCalledWith('https://tests.example/api/v1/health', expect.any(Object));
+    expect(request).toHaveBeenCalledWith('https://tests.example/api/v1/health', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(request.mock.calls[0][1]).not.toHaveProperty('headers');
+    expect(request.mock.calls[0][1]).not.toHaveProperty('credentials');
     expect(getActiveApiBaseUrl()).toBe(PRODUCTION_API_URL);
   });
 
@@ -65,6 +67,6 @@ describe('API activa en runtime', () => {
 
   it('health fallido presenta el error público sin filtrar detalles', async () => {
     const request = vi.fn().mockRejectedValue(new Error('ECONNREFUSED internal host'));
-    await expect(testApiConnection('https://tests.example/api/v1', request)).rejects.toThrow('No se pudo conectar con esta API.');
+    await expect(testApiConnection('https://tests.example/api/v1', request)).rejects.toThrow('No se pudo verificar esta API desde este origen.');
   });
 });

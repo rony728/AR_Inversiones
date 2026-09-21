@@ -50,7 +50,7 @@ export function Settings() {
   async function testCandidate() {
     setWorking(true); setFeedback('');
     try { await testApiConnection(candidate); setFeedback('Conexión correcta.'); }
-    catch { setFeedback('No se pudo conectar con esta API.'); }
+    catch (reason) { setFeedback(reason instanceof Error ? reason.message : 'No se pudo verificar esta API desde este origen.'); }
     finally { setWorking(false); }
   }
 

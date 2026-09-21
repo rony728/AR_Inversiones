@@ -66,4 +66,12 @@ describe('Configuración', () => {
     await act(async () => restore.click());
     await vi.waitFor(() => expect(mocks.change).toHaveBeenCalledWith(expect.objectContaining({ active: 'PRODUCCION' }), 'https://api-ar-inversiones.rtdev.uk/api/v1'));
   });
+
+  it('explica que un fallo de fetch puede deberse al origen CORS sin cambiar el servidor', async () => {
+    mocks.test.mockRejectedValue(new Error('No se pudo verificar esta API desde este origen. El servidor puede estar disponible, pero este navegador podría no tener permiso CORS.'));
+    const testButton = [...container.querySelectorAll('button')].find((button) => button.textContent === 'Probar conexión') as HTMLButtonElement;
+    await act(async () => testButton.click());
+    await vi.waitFor(() => expect(container.textContent).toContain('podría no tener permiso CORS'));
+    expect(mocks.change).not.toHaveBeenCalled();
+  });
 });

@@ -27,17 +27,19 @@ function setText(element: HTMLTextAreaElement, value: string) { Object.getOwnPro
 function setInput(element: HTMLInputElement, value: string) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(element, value); element.dispatchEvent(new Event('input', { bubbles: true })); }
 
 describe('modales de préstamos', () => {
-  let container: HTMLDivElement; let root: ReturnType<typeof createRoot>; let deletedIds: Set<string>; let loanBalances: Record<string, number>; let failPayment: boolean;
+  let container: HTMLDivElement; let root: ReturnType<typeof createRoot>; let deletedIds: Set<string>; let loanBalances: Record<string, number>; let failPayment: boolean; let failPaymentRefresh: boolean; let paymentPosts: number;
   beforeEach(async () => {
     deletedIds = new Set();
     failPayment = false;
+    failPaymentRefresh = false;
+    paymentPosts = 0;
     loanBalances = { Alex: 1005, Brian: 5911, Rony: 3000 };
     apiMock.mockImplementation(async (path: string, options?: { method?: string }) => {
-      if (path === '/prestamos') return { data: loans.map((loan) => deletedIds.has(loan.id) ? { ...loan, eliminado_at: '2026-09-11T12:00:00Z', estado_antes_eliminacion: loan.estado, motivo_eliminacion: 'Duplicado de migración' } : loan) };
+      if (path === '/prestamos') { if (failPaymentRefresh && paymentPosts > 0) throw new Error('No se pudo refrescar la cartera.'); return { data: loans.map((loan) => deletedIds.has(loan.id) ? { ...loan, eliminado_at: '2026-09-11T12:00:00Z', estado_antes_eliminacion: loan.estado, motivo_eliminacion: 'Duplicado de migración' } : loan) }; }
       if (path === '/catalogo/clientes') return { data: [{ id: clientId, nombre: 'Cliente', activo: true }] };
       if (path === '/catalogo/socios') return { data: partnerRows(loanBalances) };
       if (/^\/prestamos\/loan-\d\/liquidacion\?/.test(path)) return { data: { capitalPendiente: 800, interesesPendientes: 120, periodosPendientes: 1, pagoMinimo: 120, totalMaximo: 920, proximaFecha: '2026-10-11', estadoActual: 'ACTIVO' } };
-      if (/^\/prestamos\/loan-\d\/pagos$/.test(path) && options?.method === 'POST') { if (failPayment) throw new Error('No se pudo aplicar el pago.'); return { data: { interes: '120.00', capital: '0.00', montoExtra: '25.00', totalRecibido: '145.00', capitalRestante: '800.00', estado: 'ACTIVO' } }; }
+      if (/^\/prestamos\/loan-\d\/pagos$/.test(path) && options?.method === 'POST') { paymentPosts += 1; if (failPayment) throw new Error('No se pudo aplicar el pago.'); return { data: { interes: '120.00', capital: '0.00', montoExtra: '25.00', totalRecibido: '145.00', capitalRestante: '800.00', estado: 'ACTIVO' } }; }
       if (/^\/prestamos\/loan-\d$/.test(path) && options?.method === 'PATCH') { loanBalances.Rony = 2800; return { data: loans[Number(path.at(-1)) - 1] }; }
       if (/^\/prestamos\/loan-\d\/eliminar$/.test(path) && options?.method === 'POST') { deletedIds.add(path.split('/')[2]); return { data: { id: path.split('/')[2] } }; }
       if (/^\/prestamos\/loan-\d$/.test(path)) { const value = detail(Number(path.at(-1)) - 1); return { data: deletedIds.has(value.prestamo.id) ? { ...value, prestamo: { ...value.prestamo, eliminado_at: '2026-09-11T12:00:00Z', estado_antes_eliminacion: value.prestamo.estado, motivo_eliminacion: 'Duplicado de migración' } } : value }; }
@@ -144,7 +146,36 @@ describe('modales de préstamos', () => {
     await vi.waitFor(() => expect(apiMock.mock.calls.some(([path, options]) => /^\/prestamos\/loan-\d\/pagos$/.test(path) && options?.method === 'POST')).toBe(true));
     const call = apiMock.mock.calls.find(([path, options]) => /^\/prestamos\/loan-\d\/pagos$/.test(path) && options?.method === 'POST');
     expect(JSON.parse(call![1].body)).toMatchObject({ monto: 120, montoExtra: 25 });
+    await vi.waitFor(() => expect(document.body.querySelector('[role="dialog"]')).toBeNull());
     expect(container.textContent).toContain('Total recibido: L 145.00');
+  });
+
+  it('cierra con éxito aunque falle el refresh posterior y no repite el pago', async () => {
+    const payButton = [...container.querySelectorAll('.mobile-record-actions button')].find((button) => button.textContent?.includes('Pago')) as HTMLButtonElement;
+    await act(async () => payButton.click()); await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+    const dialog = document.body.querySelector('[role="dialog"]')!; const amount = dialog.querySelector('input[type="number"]') as HTMLInputElement;
+    await act(async () => setInput(amount, '120')); failPaymentRefresh = true;
+    const form = dialog.querySelector('form') as HTMLFormElement;
+    await act(async () => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await vi.waitFor(() => expect(document.body.querySelector('[role="dialog"]')).toBeNull());
+    await vi.waitFor(() => expect(container.textContent).toContain('Pago aplicado:'));
+    await vi.waitFor(() => expect(container.textContent).toContain('No se pudo actualizar el listado'));
+    expect(paymentPosts).toBe(1); expect(document.body.style.overflow).toBe('');
+  });
+
+  it('ignora un segundo submit mientras el POST continúa pendiente', async () => {
+    const payButton = [...container.querySelectorAll('.mobile-record-actions button')].find((button) => button.textContent?.includes('Pago')) as HTMLButtonElement;
+    await act(async () => payButton.click()); await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+    const dialog = document.body.querySelector('[role="dialog"]')!; await act(async () => setInput(dialog.querySelector('input[type="number"]') as HTMLInputElement, '120'));
+    const form = dialog.querySelector('form') as HTMLFormElement;
+    let resolvePost: (() => void) | undefined;
+    const pending = new Promise<void>((resolve) => { resolvePost = resolve; });
+    apiMock.mockImplementationOnce(async () => { paymentPosts += 1; await pending; return { data: { interes: '120.00', capital: '0.00', montoExtra: '0.00', totalRecibido: '120.00', capitalRestante: '800.00', estado: 'ACTIVO' } }; });
+    await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+    expect(paymentPosts).toBe(1); expect(dialog.textContent).toContain('Aplicando pago...');
+    await act(async () => { resolvePost?.(); await pending; });
+    await vi.waitFor(() => expect(document.body.querySelector('[role="dialog"]')).toBeNull());
+    expect(paymentPosts).toBe(1);
   });
 
   it('muestra el error del pago dentro del modal y limpia datos al reabrir', async () => {

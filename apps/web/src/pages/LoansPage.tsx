@@ -230,12 +230,14 @@ export function LoansPage() {
       await cacheList("clientes", clientResult.data);
       await cacheList("custodias", partnerResult.data);
       setSource("server");
+      return true;
     } catch {
       const cached = (await getCachedList("prestamos")) as unknown as LoanRow[];
       setLoans(cached);
       setClients(await getCachedList("clientes"));
       setPartners(await getCachedList("custodias"));
       setSource(cached.length ? "cache" : "error");
+      return false;
     }
   }
   useEffect(() => {
@@ -443,14 +445,20 @@ export function LoansPage() {
       );
       return;
     }
-    await run(async () => {
+    if (processingRef.current) return;
+    processingRef.current = true;
+    setProcessing(true);
+    setError("");
+    const onlinePayment = navigator.onLine;
+    let paymentSaved = false;
+    try {
       const payload = {
         prestamoId: payment.prestamoId,
         fechaPago: payment.fechaPago,
         monto: Number(payment.monto),
         montoExtra: Number(payment.montoExtra || 0),
       };
-      if (navigator.onLine) {
+      if (onlinePayment) {
         const result = await api<{
           data: {
             interes: string;
@@ -467,7 +475,6 @@ export function LoansPage() {
         setMessage(
           `Pago aplicado: ${formatMoney(result.data.interes)} a interés, ${formatMoney(result.data.capital)} a capital y ${formatMoney(result.data.montoExtra)} extra. Total recibido: ${formatMoney(result.data.totalRecibido)}.`,
         );
-        await refresh(payment.prestamoId);
       } else {
         await queueMutation(
           "pagosPrestamo",
@@ -480,9 +487,30 @@ export function LoansPage() {
           "Pago guardado pendiente de sincronización; aún no está confirmado por el servidor.",
         );
       }
+      paymentSaved = true;
       setPayment(initialPayment());
+      setSettlement(null);
       setPanel(null);
-    });
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "No se pudo completar la operación.",
+      );
+    } finally {
+      processingRef.current = false;
+      setProcessing(false);
+    }
+    if (paymentSaved && onlinePayment) {
+      const showRefreshWarning = () => {
+        setMessage((current) =>
+          `${current} No se pudo actualizar el listado; recarga la página para ver los datos más recientes.`,
+        );
+      };
+      void load().then((updated) => {
+        if (!updated) showRefreshWarning();
+      }).catch(showRefreshWarning);
+    }
   }
   async function openDetail(id: string) {
     setDetailId(id);
