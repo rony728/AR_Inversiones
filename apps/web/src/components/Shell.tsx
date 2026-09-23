@@ -3,6 +3,7 @@ import {
   Activity,
   Boxes,
   ChartNoAxesCombined,
+  ChevronDown,
   ClipboardCheck,
   CreditCard,
   LayoutDashboard,
@@ -38,6 +39,14 @@ const mainNav = [
   ["/configuracion", "Configuración", Settings],
 ] as const;
 
+const pathBelongsTo = (pathname: string, group: typeof accessoryNav | typeof loanNav) =>
+  group.some(([to]) => pathname === to || pathname.startsWith(`${to}/`));
+
+const startsWithGroupsOpen = (pathname: string, group: typeof accessoryNav | typeof loanNav) => {
+  const mobile = typeof window !== "undefined" && window.innerWidth < 900;
+  return !mobile || pathBelongsTo(pathname, group);
+};
+
 export function Shell({
   children,
   userName,
@@ -51,6 +60,12 @@ export function Shell({
   const [presenceOpen, setPresenceOpen] = useState(false);
   const presenceRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
+  const [accessoriesOpen, setAccessoriesOpen] = useState(() =>
+    startsWithGroupsOpen(location.pathname, accessoryNav),
+  );
+  const [loansOpen, setLoansOpen] = useState(() =>
+    startsWithGroupsOpen(location.pathname, loanNav),
+  );
   const status = useOperationalStatus();
   const environmentBadge = getApiEnvironmentBadge();
   const statusLabel =
@@ -61,6 +76,8 @@ export function Shell({
         : "Local";
   useEffect(() => {
     setPresenceOpen(false);
+    if (pathBelongsTo(location.pathname, accessoryNav)) setAccessoriesOpen(true);
+    if (pathBelongsTo(location.pathname, loanNav)) setLoansOpen(true);
   }, [location.pathname]);
   useEffect(() => {
     if (!presenceOpen) return;
@@ -98,20 +115,50 @@ export function Shell({
               <span>{label}</span>
             </NavLink>
           ))}
-          <span className="nav-group-label">ACCESORIOS</span>
-          {accessoryNav.map(([to, label, Icon]) => (
-            <NavLink key={to} to={to} onClick={() => setOpen(false)}>
-              <Icon size={19} />
-              <span>{label}</span>
-            </NavLink>
-          ))}
-          <span className="nav-group-label">PRÉSTAMOS</span>
-          {loanNav.map(([to, label, Icon]) => (
-            <NavLink key={to} to={to} onClick={() => setOpen(false)}>
-              <Icon size={19} />
-              <span>{label}</span>
-            </NavLink>
-          ))}
+          <button
+            type="button"
+            className="nav-group-toggle"
+            aria-expanded={accessoriesOpen}
+            aria-controls="accessories-navigation"
+            onClick={() => setAccessoriesOpen((value) => !value)}
+          >
+            <span>ACCESORIOS</span>
+            <ChevronDown size={15} aria-hidden="true" />
+          </button>
+          <div
+            id="accessories-navigation"
+            className="nav-group-links"
+            hidden={!accessoriesOpen}
+          >
+            {accessoryNav.map(([to, label, Icon]) => (
+              <NavLink key={to} to={to} onClick={() => setOpen(false)}>
+                <Icon size={19} />
+                <span>{label}</span>
+              </NavLink>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="nav-group-toggle"
+            aria-expanded={loansOpen}
+            aria-controls="loans-navigation"
+            onClick={() => setLoansOpen((value) => !value)}
+          >
+            <span>PRÉSTAMOS</span>
+            <ChevronDown size={15} aria-hidden="true" />
+          </button>
+          <div
+            id="loans-navigation"
+            className="nav-group-links"
+            hidden={!loansOpen}
+          >
+            {loanNav.map(([to, label, Icon]) => (
+              <NavLink key={to} to={to} onClick={() => setOpen(false)}>
+                <Icon size={19} />
+                <span>{label}</span>
+              </NavLink>
+            ))}
+          </div>
           {mainNav.slice(1).map(([to, label, Icon]) => (
             <NavLink key={to} to={to} onClick={() => setOpen(false)}>
               <Icon size={19} />

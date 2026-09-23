@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { money, purchaseInput, registerPurchase, toCents, weightedAverage } from '../src/modules/operations/inventory-service.js';
+import { money, purchaseInput, registerPurchase, saleHistorySql, toCents, weightedAverage } from '../src/modules/operations/inventory-service.js';
+
+test('el historial de ventas obtiene productos y socios desde sus detalles', () => {
+  assert.match(saleHistorySql, /FROM detalle_ventas d/);
+  assert.match(saleHistorySql, /JOIN productos p ON p\.id=d\.producto_id/);
+  assert.match(saleHistorySql, /JOIN socios s ON s\.id=d\.socio_id/);
+  assert.match(saleHistorySql, /AS productos/);
+  assert.match(saleHistorySql, /AS socios/);
+});
 
 test('calcula costo promedio ponderado sin redondear el saldo monetario', () => {
   assert.equal(weightedAverage(2, 300, 3, 500), 420);

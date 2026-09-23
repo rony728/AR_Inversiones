@@ -12,6 +12,20 @@ export const saleInput = z.object({ clienteId: uuid.nullish(), fecha: z.string()
 export type PurchaseInput = z.infer<typeof purchaseInput>;
 export type SaleInput = z.infer<typeof saleInput>;
 
+export const saleHistorySql = `SELECT v.*,COALESCE(c.nombre,'Cliente no especificado') AS cliente,
+  detalle.productos,detalle.socios
+  FROM ventas v
+  LEFT JOIN clientes c ON c.id=v.cliente_id
+  LEFT JOIN LATERAL (
+    SELECT string_agg(DISTINCT p.nombre,', ' ORDER BY p.nombre) AS productos,
+      string_agg(DISTINCT s.nombre,', ' ORDER BY s.nombre) AS socios
+    FROM detalle_ventas d
+    JOIN productos p ON p.id=d.producto_id
+    JOIN socios s ON s.id=d.socio_id
+    WHERE d.venta_id=v.id
+  ) detalle ON true
+  ORDER BY v.created_at DESC LIMIT 200`;
+
 export const toCents = (value: number) => Math.round(value * 100);
 export const money = (cents: number) => (cents / 100).toFixed(2);
 export const weightedAverage = (stock: number, average: number, quantity: number, cost: number) => Math.round((((stock * average) + (quantity * cost)) / (stock + quantity)) * 10000) / 10000;

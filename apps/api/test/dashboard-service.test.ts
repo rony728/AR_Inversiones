@@ -18,4 +18,6 @@ test('las consultas del dashboard excluyen préstamos eliminados', async () => {
   await getDashboard(client as never, '2026-09-01', '2026-09-30');
   assert.match(calls[0], /eliminado_at IS NULL AND estado IN \('ACTIVO','VENCIDO'\)/);
   assert.match(calls[1], /p\.eliminado_at IS NULL AND p\.es_heredado=false/);
+  assert.match(calls[1], /JOIN productos p ON p\.id=d\.producto_id/);
+  assert.match(calls[1], /AS productos/);
 });

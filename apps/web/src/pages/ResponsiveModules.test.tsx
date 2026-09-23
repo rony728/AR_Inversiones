@@ -44,7 +44,7 @@ describe('presentación responsive de módulos operativos', () => {
       if (path === '/catalogo/productos') return { data: [] };
       if (path === '/catalogo/socios') return { data: [{ id: 'partner-1', nombre: 'Rony', custodias: [] }] };
       if (path === (kind === 'venta' ? '/catalogo/clientes' : '/catalogo/proveedores')) return { data: [{ id: 'contact-1', nombre: contactName }] };
-      if (path === historyPath) return { data: [{ id: 'record-123456', cliente_id: 'contact-1', proveedor_id: 'contact-1', socio_id: 'partner-1', fecha: '2026-09-13', total: 1250, ganancia_total: 250, estado: 'CONFIRMADA', observaciones: 'Entrega coordinada' }] };
+      if (path === historyPath) return { data: [{ id: 'record-123456', cliente_id: 'contact-1', proveedor_id: 'contact-1', socio_id: 'partner-1', cliente: contactName, socios: kind === 'venta' ? 'Rony' : undefined, productos: kind === 'venta' ? 'Samsung A15, Cargador' : undefined, fecha: '2026-09-13', total: 1250, ganancia_total: 250, estado: 'CONFIRMADA', observaciones: 'Entrega coordinada' }] };
       throw new Error(`Ruta inesperada: ${path}`);
     });
     await act(async () => root.render(<TransactionPage kind={kind} />));
@@ -55,6 +55,11 @@ describe('presentación responsive de módulos operativos', () => {
     expect(mobile).toBeTruthy();
     expect(mobile.textContent).toContain(contactName);
     expect(mobile.textContent).toContain('L 1250.00');
+    if (kind === 'venta') {
+      expect(mobile.textContent).toContain('Samsung A15, Cargador');
+      expect(mobile.textContent).toContain('Socio receptor');
+      expect(container.querySelector('.desktop-record-table')?.textContent).toContain('Producto(s)');
+    }
     expect(container.querySelector('.transaction-history-tools input')).toBeTruthy();
   });
 

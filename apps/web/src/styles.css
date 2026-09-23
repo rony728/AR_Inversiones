@@ -456,7 +456,16 @@ td { color: var(--text-main); }
   .client-modal .client-form-actions { grid-template-columns: 1fr; }
 }
 
-.nav-group-label { display: block; margin: 18px 16px 6px; color: #8fa1b8; font-size: .68rem; font-weight: 800; letter-spacing: .12em; }
+.nav-group-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; margin: 14px 0 2px; padding: 8px 14px; border: 0; border-radius: var(--radius-sm); background: transparent; color: #8fa1b8; font-size: .68rem; font-weight: 800; letter-spacing: .12em; text-align: left; }
+.nav-group-toggle:hover, .nav-group-toggle:focus-visible { background: rgba(255, 255, 255, 0.06); color: #fff; outline: none; }
+.nav-group-toggle svg { transition: transform .2s ease; }
+.nav-group-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.nav-group-links { display: grid; gap: 4px; }
+.nav-group-links[hidden] { display: none; }
+.nav-group-links a { padding-left: 20px; }
+@media (max-width: 899px) {
+  .nav-group-toggle { min-height: 44px; margin-top: 8px; }
+}
 .loan-due-yellow { background: #fff8d8 !important; }
 .loan-due-orange { background: #ffead2 !important; }
 .loan-due-red { background: #ffe0e0 !important; }

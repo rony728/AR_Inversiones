@@ -101,21 +101,33 @@ export function TransactionPage({ kind }: { kind: "compra" | "venta" }) {
       ),
     );
   const contactName = (row: Row) => {
+    if (sale && typeof row.cliente === "string" && row.cliente.trim()) {
+      return row.cliente;
+    }
     const id = sale ? row.cliente_id : row.proveedor_id;
     return String(
       contacts.find((contact) => contact.id === id)?.nombre ??
         (sale ? "Cliente no especificado" : "Proveedor no especificado"),
     );
   };
-  const partnerName = (row: Row) =>
-    String(
-      partners.find((partner) => partner.id === row.socio_id)?.nombre ?? "—",
+  const partnerName = (row: Row) => {
+    if (sale && typeof row.socios === "string" && row.socios.trim()) {
+      return row.socios;
+    }
+    return String(
+      partners.find((partner) => partner.id === row.socio_id)?.nombre ??
+        "Socio no disponible",
     );
+  };
+  const productNames = (row: Row) =>
+    typeof row.productos === "string" && row.productos.trim()
+      ? row.productos
+      : "Detalle no disponible";
   const filteredHistory = useMemo(() => {
     const term = historySearch.trim().toLocaleLowerCase("es-HN");
     if (!term) return history;
     return history.filter((row) =>
-      `${contactName(row)} ${partnerName(row)} ${row.id ?? ""} ${row.estado ?? ""}`
+      `${productNames(row)} ${contactName(row)} ${partnerName(row)} ${row.id ?? ""} ${row.estado ?? ""}`
         .toLocaleLowerCase("es-HN")
         .includes(term),
     );
@@ -580,8 +592,9 @@ export function TransactionPage({ kind }: { kind: "compra" | "venta" }) {
             <thead>
               <tr>
                 <th>Fecha</th>
+                {sale && <th>Producto(s)</th>}
                 <th>{sale ? "Cliente" : "Proveedor"}</th>
-                <th>Socio</th>
+                <th>{sale ? "Socio receptor" : "Socio"}</th>
                 {sale && <th>Utilidad</th>}
                 <th>Total</th>
                 <th>Estado</th>
@@ -593,6 +606,7 @@ export function TransactionPage({ kind }: { kind: "compra" | "venta" }) {
                 filteredHistory.map((row) => (
                   <tr key={String(row.id)}>
                     <td>{formatDate(row.fecha)}</td>
+                    {sale && <td>{productNames(row)}</td>}
                     <td>{contactName(row)}</td>
                     <td>{partnerName(row)}</td>
                     {sale && (
@@ -611,7 +625,7 @@ export function TransactionPage({ kind }: { kind: "compra" | "venta" }) {
                 ))
               ) : (
                 <tr>
-                  <td className="empty-cell" colSpan={sale ? 7 : 6}>
+                  <td className="empty-cell" colSpan={sale ? 8 : 6}>
                     No hay {sale ? "ventas" : "compras"} registradas.
                   </td>
                 </tr>
@@ -643,8 +657,14 @@ export function TransactionPage({ kind }: { kind: "compra" | "venta" }) {
                   {formatMoney(row.total as string)}
                 </strong>
                 <div className="mobile-record-grid">
+                  {sale && (
+                    <span>
+                      Producto(s)<strong>{productNames(row)}</strong>
+                    </span>
+                  )}
                   <span>
-                    Socio<strong>{partnerName(row)}</strong>
+                    {sale ? "Socio receptor" : "Socio"}
+                    <strong>{partnerName(row)}</strong>
                   </span>
                   {sale && (
                     <span>

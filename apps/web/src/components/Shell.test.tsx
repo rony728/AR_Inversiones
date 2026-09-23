@@ -15,7 +15,7 @@ const baseStatus: OperationalStatus = { mode: 'online', pending: 0, lastSyncedAt
 
 describe('cabecera operativa', () => {
   let container: HTMLDivElement; let root: ReturnType<typeof createRoot>;
-  async function render(status: OperationalStatus = baseStatus) { mocks.status = status; await act(async () => root.render(<MemoryRouter><Shell userName="Rony Turcios" onLogout={vi.fn()}><p>Contenido</p></Shell></MemoryRouter>)); }
+  async function render(status: OperationalStatus = baseStatus, path = '/') { mocks.status = status; await act(async () => root.render(<MemoryRouter initialEntries={[path]}><Shell userName="Rony Turcios" onLogout={vi.fn()}><p>Contenido</p></Shell></MemoryRouter>)); }
   beforeEach(() => { mocks.badge = 'PRUEBAS'; container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container); });
   afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
 
@@ -43,5 +43,25 @@ describe('cabecera operativa', () => {
     await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))); expect(document.querySelector('[aria-label="Usuarios activos"]')).toBeNull();
     await act(async () => trigger.click()); await act(async () => document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))); expect(document.querySelector('[aria-label="Usuarios activos"]')).toBeNull();
     await act(async () => trigger.click()); const productsLink = [...container.querySelectorAll('a')].find((link) => link.textContent?.includes('Productos')) as HTMLAnchorElement; await act(async () => productsLink.click()); expect(document.querySelector('[aria-label="Usuarios activos"]')).toBeNull();
+  });
+
+  it('inicia los grupos cerrados en móvil y permite desplegarlos', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    await render();
+    const accessories = container.querySelector('[aria-controls="accessories-navigation"]') as HTMLButtonElement;
+    const loans = container.querySelector('[aria-controls="loans-navigation"]') as HTMLButtonElement;
+    expect(accessories.getAttribute('aria-expanded')).toBe('false');
+    expect(loans.getAttribute('aria-expanded')).toBe('false');
+    expect((container.querySelector('#accessories-navigation') as HTMLDivElement).hidden).toBe(true);
+    await act(async () => accessories.click());
+    expect(accessories.getAttribute('aria-expanded')).toBe('true');
+    expect((container.querySelector('#accessories-navigation') as HTMLDivElement).hidden).toBe(false);
+  });
+
+  it('abre automáticamente en móvil el grupo de la ruta activa', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    await render(baseStatus, '/prestamos');
+    expect(container.querySelector('[aria-controls="loans-navigation"]')?.getAttribute('aria-expanded')).toBe('true');
+    expect(container.querySelector('a.active')?.textContent).toContain('Préstamos');
   });
 });

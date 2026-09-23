@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { query, withTransaction } from '../../db/pool.js';
 import { AppError, asyncHandler } from '../../lib/errors.js';
-import { purchaseInput, registerPurchase, registerSale, saleInput } from './inventory-service.js';
+import { purchaseInput, registerPurchase, registerSale, saleHistorySql, saleInput } from './inventory-service.js';
 import { badDebtInput, cancelLoan, changeNextPaymentDate, createLoan, declareBadDebt, deleteLoan, deleteLoanInput, editLoan, getLoanDetail, loanEditInput, loanInput, loanListSql, paymentInput, previewLoanPayment, recoveryInput, registerBadDebtRecovery, registerLoanPayment, rescheduleInput, reversalInput, reverseBadDebtRecovery, reverseLoanPayment, refreshOverdueLoans } from './loan-service.js';
 import { adjustFundBalance, fundAdjustmentInput, transferBetweenCustodies, transferInput } from './custody-service.js';
 import { distributionInput, expenseInput, registerExpense, registerProfitDistribution } from './finance-service.js';
@@ -11,7 +11,7 @@ import { dashboardPeriodInput, getDashboard } from './dashboard-service.js';
 import { getProfitSummary } from './profit-service.js';
 
 const readModels = {
-  compras: { table: 'compras', order: 'created_at' }, ventas: { table: 'ventas', order: 'created_at' },
+  compras: { table: 'compras', order: 'created_at' },
   inventario: { table: 'inventario', order: 'updated_at' }, prestamos: { table: 'prestamos', order: 'created_at' },
   'pagos-prestamo': { table: 'pagos_prestamo', order: 'created_at' }, custodias: { table: 'custodias', order: 'created_at' },
   'movimientos-financieros': { table: 'movimientos_financieros', order: 'created_at' }, gastos: { table: 'gastos', order: 'created_at' },
@@ -253,8 +253,13 @@ operationsRouter.get('/prestamos', asyncHandler(async (_req, res) => {
   res.json({ data: rows.rows });
 }));
 
+operationsRouter.get('/ventas', asyncHandler(async (_req, res) => {
+  const result = await query(saleHistorySql);
+  res.json({ data: result.rows });
+}));
+
 operationsRouter.get('/:resource', asyncHandler(async (req, res) => {
-  const resource = z.enum(['compras', 'ventas', 'inventario', 'pagos-prestamo', 'custodias', 'movimientos-financieros', 'gastos', 'distribuciones', 'auditorias', 'auditoria-sistema', 'sincronizacion']).parse(req.params.resource);
+  const resource = z.enum(['compras', 'inventario', 'pagos-prestamo', 'custodias', 'movimientos-financieros', 'gastos', 'distribuciones', 'auditorias', 'auditoria-sistema', 'sincronizacion']).parse(req.params.resource);
   const model = readModels[resource];
   const result = await query(`SELECT * FROM ${model.table} ORDER BY ${model.order} DESC LIMIT 200`);
   res.json({ data: result.rows });
