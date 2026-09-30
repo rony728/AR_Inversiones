@@ -9,6 +9,7 @@ import { distributionInput, expenseInput, registerExpense, registerProfitDistrib
 import { approveInventoryAudit, inventoryAuditInput, startInventoryAudit } from './inventory-audit-service.js';
 import { dashboardPeriodInput, getDashboard } from './dashboard-service.js';
 import { getProfitSummary } from './profit-service.js';
+import { historicalInventoryValuationInput, valueHistoricalInventory } from './historical-inventory-valuation-service.js';
 
 const readModels = {
   compras: { table: 'compras', order: 'created_at' },
@@ -173,6 +174,12 @@ operationsRouter.post('/auditorias/:id/aprobar', asyncHandler(async (req, res) =
   const auditId = z.string().uuid().parse(req.params.id);
   const result = await withTransaction((client) => approveInventoryAudit(client, auditId, req.user?.id));
   res.json({ data: result });
+}));
+
+operationsRouter.post('/inventario/valorizacion-historica', asyncHandler(async (req, res) => {
+  const input = historicalInventoryValuationInput.parse(req.body);
+  const result = await withTransaction((client) => valueHistoricalInventory(client, input, req.user?.id));
+  res.status(201).json({ data: result });
 }));
 
 operationsRouter.post('/prestamos/:id/pagos', asyncHandler(async (req, res) => {

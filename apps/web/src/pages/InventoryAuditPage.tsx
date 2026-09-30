@@ -1,12 +1,25 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, ClipboardCheck, Minus, Plus } from "lucide-react";
-import { api } from "../lib/api";
+import { BadgeDollarSign, CheckCircle2, ClipboardCheck, Minus, Plus, TriangleAlert } from "lucide-react";
+import { api, formatMoney } from "../lib/api";
 import { formatDateTime } from "../lib/date-format";
 import { cacheList, getCachedList, queueMutation } from "../lib/offline-db";
 
 type Row = Record<string, unknown>;
 type CountLine = { productoId: string; existenciaFisica: number };
 type AuditDetail = Row & { detalles?: Row[] };
+type ValuationForm = {
+  productoId: string;
+  costoUnitario: string;
+  fechaReferencia: string;
+  motivo: string;
+};
+
+const emptyValuation = (): ValuationForm => ({
+  productoId: "",
+  costoUnitario: "",
+  fechaReferencia: new Date().toISOString().slice(0, 10),
+  motivo: "",
+});
 
 async function loadCached(
   path: string,
@@ -31,6 +44,9 @@ export function InventoryAuditPage() {
   const [observations, setObservations] = useState("");
   const [detail, setDetail] = useState<AuditDetail | null>(null);
   const [message, setMessage] = useState("");
+  const [valuation, setValuation] = useState<ValuationForm>(emptyValuation);
+  const [valuationMessage, setValuationMessage] = useState("");
+  const [valuationSaving, setValuationSaving] = useState(false);
 
   async function refreshAudits() {
     const rows = await loadCached("/auditorias", "auditorias");
@@ -60,6 +76,80 @@ export function InventoryAuditPage() {
     setLines((current) =>
       current.map((line, i) => (i === index ? { ...line, ...values } : line)),
     );
+
+  const valuationInventory = inventory.find(
+    (item) => item.producto_id === valuation.productoId,
+  );
+  const valuationStock = Number(valuationInventory?.existencia ?? 0);
+  const valuationCurrentCost = Number(
+    valuationInventory?.costo_promedio_unitario ?? 0,
+  );
+
+  async function valueInventory(event: React.FormEvent) {
+    event.preventDefault();
+    setValuationMessage("");
+    const newCost = Number(valuation.costoUnitario);
+    if (!navigator.onLine) {
+      setValuationMessage(
+        "Conéctate para valorizar: el servidor debe verificar la existencia actual.",
+      );
+      return;
+    }
+    if (!valuation.productoId || valuationStock <= 0) {
+      setValuationMessage("Selecciona un producto con existencia disponible.");
+      return;
+    }
+    if (valuationCurrentCost !== 0) {
+      setValuationMessage(
+        "Este producto ya tiene costo. La valorización histórica solo aplica a inventario sin valorizar.",
+      );
+      return;
+    }
+    if (!Number.isFinite(newCost) || newCost <= 0) {
+      setValuationMessage("El costo histórico debe ser mayor que cero.");
+      return;
+    }
+    if (valuation.motivo.trim().length < 3) {
+      setValuationMessage("Describe el motivo de la valorización histórica.");
+      return;
+    }
+
+    setValuationSaving(true);
+    try {
+      await api("/inventario/valorizacion-historica", {
+        method: "POST",
+        body: JSON.stringify({
+          productoId: valuation.productoId,
+          existenciaEsperada: valuationStock,
+          costoUnitario: newCost,
+          fechaReferencia: valuation.fechaReferencia,
+          motivo: valuation.motivo.trim(),
+        }),
+      });
+      const [updatedProducts, updatedInventory] = await Promise.all([
+        loadCached("/catalogo/productos", "productos"),
+        loadCached("/inventario", "inventario"),
+      ]);
+      setProducts(updatedProducts);
+      setInventory(updatedInventory);
+      setValuation({
+        ...emptyValuation(),
+        productoId: valuation.productoId,
+        fechaReferencia: valuation.fechaReferencia,
+      });
+      setValuationMessage(
+        "Inventario histórico valorizado. La existencia física no fue modificada.",
+      );
+    } catch (error) {
+      setValuationMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo valorizar el inventario histórico.",
+      );
+    } finally {
+      setValuationSaving(false);
+    }
+  }
 
   async function start(event: React.FormEvent) {
     event.preventDefault();
@@ -172,6 +262,91 @@ export function InventoryAuditPage() {
           <p>Compara el conteo físico con el sistema y registra cada ajuste.</p>
         </div>
       </section>
+      <form className="panel historical-valuation-form" onSubmit={valueInventory}>
+        <div className="panel-head">
+          <div>
+            <h3>
+              <BadgeDollarSign size={17} /> Valorizar inventario histórico
+            </h3>
+            <p>Asigna costo únicamente a existencias heredadas que todavía tienen costo cero.</p>
+          </div>
+        </div>
+        <div className="historical-valuation-warning" role="note">
+          <TriangleAlert size={18} />
+          <span>
+            Esta operación no modifica la cantidad de inventario ni genera una compra. Únicamente establece el costo histórico de las unidades existentes.
+          </span>
+        </div>
+        <div className="historical-valuation-grid">
+          <label>
+            Producto
+            <select
+              required
+              value={valuation.productoId}
+              onChange={(event) => {
+                setValuation((current) => ({ ...current, productoId: event.target.value }));
+                setValuationMessage("");
+              }}
+            >
+              <option value="">Seleccionar</option>
+              {products
+                .filter((product) => product.activo !== false)
+                .map((product) => (
+                  <option key={String(product.id)} value={String(product.id)}>
+                    {String(product.codigo)} · {String(product.nombre)}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label>
+            Existencia actual
+            <input readOnly value={valuation.productoId ? String(valuationStock) : "—"} />
+          </label>
+          <label>
+            Costo promedio actual
+            <input readOnly value={valuation.productoId ? formatMoney(valuationCurrentCost) : "—"} />
+          </label>
+          <label>
+            Nuevo costo unitario
+            <input
+              required
+              type="number"
+              min="0.0001"
+              step="0.0001"
+              value={valuation.costoUnitario}
+              onChange={(event) => setValuation((current) => ({ ...current, costoUnitario: event.target.value }))}
+            />
+          </label>
+          <label>
+            Fecha de referencia
+            <input
+              required
+              type="date"
+              value={valuation.fechaReferencia}
+              onChange={(event) => setValuation((current) => ({ ...current, fechaReferencia: event.target.value }))}
+            />
+          </label>
+          <label className="historical-valuation-reason">
+            Motivo
+            <textarea
+              required
+              minLength={3}
+              maxLength={2000}
+              rows={3}
+              value={valuation.motivo}
+              onChange={(event) => setValuation((current) => ({ ...current, motivo: event.target.value }))}
+            />
+          </label>
+        </div>
+        <button
+          className="primary historical-valuation-submit"
+          type="submit"
+          disabled={valuationSaving}
+        >
+          {valuationSaving ? "Valorizando…" : "Confirmar valorización histórica"}
+        </button>
+        {valuationMessage && <p className="form-message">{valuationMessage}</p>}
+      </form>
       <form className="panel audit-form" onSubmit={start}>
         <div className="panel-head">
           <div>
