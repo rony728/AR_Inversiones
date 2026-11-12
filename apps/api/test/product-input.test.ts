@@ -20,3 +20,22 @@ test('las categorías se crean y desactivan con datos válidos', () => {
   assert.deepEqual(categoryUpdateInput.parse({ activo: false }), { activo: false });
   assert.throws(() => categoryCreateInput.parse({ nombre: '' }));
 });
+
+test('campos comerciales acepta promociones válidas y conserva protección de inventario', () => {
+  const payload = productCreateInput.parse({
+    codigo: 'P-010', nombre: 'Producto comercial', descripcion: null, categoriaId: null,
+    precioVenta: 500, activo: true, destacado: true, descripcionTienda: 'Oferta especial',
+    precioOferta: 399, fechaInicioOferta: '2026-11-12T08:00:00-06:00',
+    fechaFinOferta: '2026-11-19T08:00:00-06:00'
+  });
+  assert.equal(payload.destacado, true);
+  assert.equal(payload.precioOferta, 399);
+  assert.throws(() => productCreateInput.parse({ ...payload, stock: 100 }));
+  assert.throws(() => productCreateInput.parse({ ...payload, descripcionTienda: 'x'.repeat(5001) }));
+  assert.throws(() => productCreateInput.parse({ ...payload, precioOferta: -10 }));
+  assert.throws(() => productCreateInput.parse({ ...payload, fechaInicioOferta: 'mañana' }));
+  assert.deepEqual(
+    productUpdateInput.parse({ destacado: false, precioOferta: null, fechaInicioOferta: null, fechaFinOferta: null }),
+    { destacado: false, precioOferta: null, fechaInicioOferta: null, fechaFinOferta: null }
+  );
+});

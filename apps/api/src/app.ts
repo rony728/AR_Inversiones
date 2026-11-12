@@ -18,7 +18,19 @@ app.use(pinoHttp({
 }));
 app.use((req, res, next) => { res.setHeader('X-Request-Id', String(req.id)); next(); });
 app.use(apiSecurityHeaders);
-app.use(cors({ origin: (origin, callback) => { if (!origin || corsOrigins.includes(origin)) return callback(null, true); return callback(new AppError(403, 'Origen no permitido por CORS.', 'CORS_FORBIDDEN')); }, credentials: false, methods: ['GET', 'POST', 'PATCH', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'], maxAge: 600 }));
+app.use(cors((req, callback) => callback(null, {
+  origin: (origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) => {
+    const storefrontRead = req.path.startsWith('/api/v1/tienda/')
+      && (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS');
+    const storefrontAllowed = storefrontRead && origin === 'https://araccesorios.rtdev.uk';
+    if (!origin || corsOrigins.includes(origin) || storefrontAllowed) return callback(null, true);
+    return callback(new AppError(403, 'Origen no permitido por CORS.', 'CORS_FORBIDDEN'));
+  },
+  credentials: false,
+  methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
+  maxAge: 600
+})));
 app.use(express.json({ limit: env.REQUEST_BODY_LIMIT, strict: true }));
 app.use('/api/v1/auth', createRateLimiter({ max: env.AUTH_RATE_LIMIT_MAX, windowMs: env.AUTH_RATE_LIMIT_WINDOW_MS }));
 app.use('/api/v1', apiRouter);

@@ -6,7 +6,12 @@ const editableProductFields = {
   descripcion: z.string().trim().max(2000).nullable().default(null),
   categoriaId: z.string().uuid().nullable(),
   precioVenta: z.coerce.number().min(0).max(999999999999.99),
-  activo: z.boolean()
+  activo: z.boolean(),
+  destacado: z.boolean().optional(),
+  descripcionTienda: z.string().trim().max(5000).nullable().optional(),
+  precioOferta: z.coerce.number().positive().max(999999999999.99).nullable().optional(),
+  fechaInicioOferta: z.string().datetime({ offset: true }).nullable().optional(),
+  fechaFinOferta: z.string().datetime({ offset: true }).nullable().optional()
 };
 
 export const productCreateInput = z.object(editableProductFields).strict();
@@ -17,7 +22,12 @@ export const productUpdateInput = z.object({
   descripcion: editableProductFields.descripcion.optional(),
   categoriaId: editableProductFields.categoriaId.optional(),
   precioVenta: editableProductFields.precioVenta.optional(),
-  activo: editableProductFields.activo.optional()
+  activo: editableProductFields.activo.optional(),
+  destacado: editableProductFields.destacado,
+  descripcionTienda: editableProductFields.descripcionTienda,
+  precioOferta: editableProductFields.precioOferta,
+  fechaInicioOferta: editableProductFields.fechaInicioOferta,
+  fechaFinOferta: editableProductFields.fechaFinOferta
 }).strict().refine((value) => Object.keys(value).length > 0, 'Debe indicar al menos un campo editable.');
 
 export const categoryCreateInput = z.object({ nombre: z.string().trim().min(2).max(120) }).strict();

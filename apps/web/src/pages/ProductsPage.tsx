@@ -49,7 +49,26 @@ type ProductForm = {
   categoriaId: string;
   precioVenta: string;
   activo: boolean;
+  destacado: boolean;
+  descripcionTienda: string;
+  precioOferta: string;
+  fechaInicioOferta: string;
+  fechaFinOferta: string;
 };
+
+function localDateTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function isoDateTime(local: string): string | null {
+  if (!local) return null;
+  const date = new Date(local);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
 const emptyForm: ProductForm = {
   codigo: "",
   nombre: "",
@@ -57,6 +76,11 @@ const emptyForm: ProductForm = {
   categoriaId: "",
   precioVenta: "0",
   activo: true,
+  destacado: false,
+  descripcionTienda: "",
+  precioOferta: "",
+  fechaInicioOferta: "",
+  fechaFinOferta: "",
 };
 
 function ProductImage({
@@ -260,6 +284,11 @@ export function ProductsPage() {
       categoriaId: product.categoria_id ?? "",
       precioVenta: String(product.precio_venta ?? 0),
       activo: product.activo,
+      destacado: product.destacado ?? false,
+      descripcionTienda: product.descripcion_tienda ?? "",
+      precioOferta: product.precio_oferta == null ? "" : String(product.precio_oferta),
+      fechaInicioOferta: localDateTime(product.fecha_inicio_oferta),
+      fechaFinOferta: localDateTime(product.fecha_fin_oferta),
     });
     setMessage("");
     setViewing(null);
@@ -294,6 +323,18 @@ export function ProductsPage() {
     setMessage("");
     let targetId = editingId;
     try {
+      const normalPrice = Number(form.precioVenta);
+      const offerPrice = form.precioOferta.trim() ? Number(form.precioOferta) : null;
+      if (offerPrice !== null && (!Number.isFinite(offerPrice) || offerPrice <= 0 || offerPrice >= normalPrice)) {
+        throw new Error("El precio de oferta debe ser mayor que cero y menor que el precio normal.");
+      }
+      if ((form.fechaInicioOferta || form.fechaFinOferta) && offerPrice === null) {
+        throw new Error("Define un precio de oferta antes de establecer sus fechas.");
+      }
+      if (form.fechaInicioOferta && form.fechaFinOferta &&
+          new Date(form.fechaInicioOferta).getTime() >= new Date(form.fechaFinOferta).getTime()) {
+        throw new Error("La fecha final de oferta debe ser posterior a la inicial.");
+      }
       const payload = {
         codigo: form.codigo,
         nombre: form.nombre,
@@ -301,6 +342,11 @@ export function ProductsPage() {
         categoriaId: form.categoriaId || null,
         precioVenta: Number(form.precioVenta),
         activo: form.activo,
+        destacado: form.destacado,
+        descripcionTienda: form.descripcionTienda.trim() || null,
+        precioOferta: offerPrice,
+        fechaInicioOferta: isoDateTime(form.fechaInicioOferta),
+        fechaFinOferta: isoDateTime(form.fechaFinOferta),
       };
       const result = await api<{ data: { id: string } }>(
         `/catalogo/productos${targetId ? `/${targetId}` : ""}`,
@@ -648,6 +694,45 @@ export function ProductsPage() {
                     }
                   />
                 </label>
+                <fieldset className="product-storefront-fields">
+                  <legend>Información para tienda en línea</legend>
+                  <p>Los productos activos aparecerán automáticamente en AR Accesorios.</p>
+                  <label className="checkbox-field">
+                    <input type="checkbox" checked={form.destacado}
+                      onChange={(event) => setForm({ ...form, destacado: event.target.checked })} />
+                    Producto destacado
+                  </label>
+                  <label>
+                    Descripción comercial (opcional)
+                    <textarea maxLength={5000} rows={3}
+                      value={form.descripcionTienda}
+                      placeholder="Si la dejas vacía, se usará la descripción general."
+                      onChange={(event) => setForm({ ...form, descripcionTienda: event.target.value })} />
+                  </label>
+                  <label>
+                    Precio de oferta (L)
+                    <input type="number" min="0.01" step="0.01"
+                      max={form.precioVenta || undefined}
+                      value={form.precioOferta}
+                      placeholder="Sin oferta"
+                      onChange={(event) => setForm({ ...form, precioOferta: event.target.value })} />
+                  </label>
+                  <div className="product-offer-dates">
+                    <label>
+                      Inicio de oferta (opcional)
+                      <input type="datetime-local" value={form.fechaInicioOferta}
+                        disabled={!form.precioOferta}
+                        onChange={(event) => setForm({ ...form, fechaInicioOferta: event.target.value })} />
+                    </label>
+                    <label>
+                      Fin de oferta (opcional)
+                      <input type="datetime-local" value={form.fechaFinOferta}
+                        disabled={!form.precioOferta}
+                        onChange={(event) => setForm({ ...form, fechaFinOferta: event.target.value })} />
+                    </label>
+                  </div>
+                  <small>El precio de venta continúa siendo el precio normal. Las ofertas solo se aplicarán durante su vigencia.</small>
+                </fieldset>
                 <label className="checkbox-field">
                   <input
                     type="checkbox"

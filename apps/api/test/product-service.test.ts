@@ -42,3 +42,30 @@ test('editar datos descriptivos conserva UUID y nunca actualiza inventario', asy
   const audit = db.calls.find((call) => call.sql.includes('INSERT INTO auditoria_sistema'))!;
   assert.equal(audit.values[2], id); assert.equal(audit.values[3], 'ACTUALIZAR');
 });
+
+test('campos comerciales se guardan sin alterar stock y rechazan ofertas inválidas', async () => {
+  const id = '11111111-1111-4111-8111-111111111111';
+  const db = fakeClient([{ id, codigo: 'SKU-1', nombre: 'Producto', precio_sugerido: 450, precio_oferta: null, fecha_inicio_oferta: null, fecha_fin_oferta: null }]);
+  await createProduct(db.client, {
+    codigo: 'SKU-1', nombre: 'Producto', descripcion: null, categoriaId: null,
+    precioVenta: 450, activo: true, destacado: true, descripcionTienda: 'Destacado',
+    precioOferta: 399, fechaInicioOferta: '2026-11-12T10:00:00Z', fechaFinOferta: '2026-12-01T10:00:00Z'
+  });
+  const insert = db.calls.find((call) => call.sql.includes('INSERT INTO productos'))!;
+  assert.match(insert.sql, /descripcion_tienda, precio_oferta, fecha_inicio_oferta/);
+  assert.equal(insert.values[6], true);
+  assert.equal(insert.values[8], 399);
+  const updated = await updateProduct(db.client, id, { destacado: true, precioOferta: 350 });
+  assert.equal(updated.id, id);
+  const update = db.calls.find((call) => call.sql.startsWith('UPDATE productos'))!;
+  assert.match(update.sql, /destacado = \$1/);
+  assert.match(update.sql, /precio_oferta = \$2/);
+  assert.equal(db.calls.some((call) => /UPDATE inventario|movimientos_inventario/.test(call.sql)), false);
+
+  await assert.rejects(
+    createProduct(db.client, { codigo: null, nombre: 'Inválido', descripcion: null, categoriaId: null, precioVenta: 100, activo: true, precioOferta: 120 }),
+    /inferior al precio normal/
+  );
+  await assert.rejects(updateProduct(db.client, id, { precioOferta: 600 }), /inferior al precio normal/);
+  await assert.rejects(updateProduct(db.client, id, { fechaInicioOferta: '2026-12-05T10:00:00Z' }), /requieren un precio de oferta/);
+});

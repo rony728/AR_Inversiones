@@ -10,6 +10,12 @@ export type ProductRow = {
   precio_venta: number | string;
   existencia_minima: number | string;
   activo: boolean;
+  slug?: string;
+  destacado?: boolean;
+  descripcion_tienda?: string | null;
+  precio_oferta?: number | string | null;
+  fecha_inicio_oferta?: string | null;
+  fecha_fin_oferta?: string | null;
   marca?: string | null;
   modelo?: string | null;
   codigo_barras?: string | null;

@@ -474,3 +474,13 @@ td { color: var(--text-main); }
 .distribution-summary { padding: 12px; border-radius: 12px; background: var(--surface-soft, #f5f7fa); }
 .distribution-summary p { margin: 4px 0; }
 @media (max-width: 899px) { .finance-category-grid { grid-template-columns: 1fr; } }
+
+/* AR Accesorios: campos comerciales del editor de productos */
+.product-storefront-fields { border: 1px solid var(--border-color, #d4dae3); border-radius: 12px; margin: 0; padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.product-storefront-fields legend { font-weight: 700; padding: 0 6px; }
+.product-storefront-fields p, .product-storefront-fields small { margin: 0; color: var(--muted, #64748b); }
+.product-storefront-fields > label { display: grid; gap: 6px; }
+.product-storefront-fields > label.checkbox-field { display: flex; align-items: center; gap: 8px; }
+.product-storefront-fields textarea, .product-storefront-fields input:not([type="checkbox"]) { width: 100%; box-sizing: border-box; }
+.product-offer-dates { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.product-offer-dates label { display: grid; gap: 6px; min-width: 0; }

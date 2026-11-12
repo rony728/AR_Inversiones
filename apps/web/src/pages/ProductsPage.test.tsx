@@ -118,4 +118,44 @@ describe('módulo Productos', () => {
     await act(async () => { clickByText(container.querySelector('.product-filter-panel')!, 'Limpiar filtros'); }); expect(codes()).toEqual(['CAF-01', 'VAS-02']); expect(heading('Producto').getAttribute('aria-label')).toBe('Producto: ascendente');
     expect(container.querySelector('.product-mobile-cards')?.children).toHaveLength(2); expect(container.querySelectorAll('.product-actions-mobile')).toHaveLength(2);
   });
+
+  it('guarda destacado, descripción comercial y promoción sin alterar stock', async () => {
+    const row = container.querySelector('tbody tr')!;
+    await act(async () => { clickByText(row, 'Editar'); });
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    const section = dialog.querySelector('.product-storefront-fields')!;
+    expect(section.textContent).toContain('Información para tienda en línea');
+    const box = section.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    const description = section.querySelector('textarea') as HTMLTextAreaElement;
+    const price = section.querySelector('input[type="number"]') as HTMLInputElement;
+    const dates = section.querySelectorAll('input[type="datetime-local"]');
+    await act(async () => {
+      box.click();
+      setInput(description, 'Edición especial de café');
+      setInput(price, '79');
+      setInput(dates[0] as HTMLInputElement, '2026-11-12T09:00');
+      setInput(dates[1] as HTMLInputElement, '2026-11-19T09:00');
+    });
+    await act(async () => { clickByText(dialog, 'Guardar producto'); });
+    await flush();
+    const patch = apiMock.mock.calls.find(([path, options]) => path === '/catalogo/productos/prod-1' && options?.method === 'PATCH');
+    expect(patch).toBeTruthy();
+    const body = JSON.parse(patch![1].body);
+    expect(body).toMatchObject({ destacado: true, descripcionTienda: 'Edición especial de café', precioOferta: 79 });
+    expect(body.fechaInicioOferta).toMatch(/^2026-11-12T/);
+    expect(body.fechaFinOferta).toMatch(/^2026-11-19T/);
+    expect(body).not.toHaveProperty('existencia');
+    expect(body).not.toHaveProperty('costoPromedio');
+  });
+
+  it('rechaza oferta igual o mayor al precio normal antes de llamar a la API', async () => {
+    const row = container.querySelector('tbody tr')!;
+    await act(async () => { clickByText(row, 'Editar'); });
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    const price = dialog.querySelector('.product-storefront-fields input[type="number"]') as HTMLInputElement;
+    await act(async () => { setInput(price, '95'); });
+    await act(async () => { clickByText(dialog, 'Guardar producto'); });
+    expect(dialog.textContent).toContain('El precio de oferta debe ser mayor que cero y menor');
+    expect(apiMock.mock.calls.some(([path, options]) => path === '/catalogo/productos/prod-1' && options?.method === 'PATCH')).toBe(false);
+  });
 });
