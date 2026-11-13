@@ -484,3 +484,17 @@ td { color: var(--text-main); }
 .product-storefront-fields textarea, .product-storefront-fields input:not([type="checkbox"]) { width: 100%; box-sizing: border-box; }
 .product-offer-dates { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
 .product-offer-dates label { display: grid; gap: 6px; min-width: 0; }
+
+/* Panel de pedidos web: datos privados únicamente dentro del shell autenticado. */
+.store-orders-pagination{display:flex;align-items:center;justify-content:center;gap:12px;padding:17px}
+.store-order-detail{margin-top:22px}
+.store-order-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;margin:18px 0}
+.store-order-grid>div{min-width:0;overflow-wrap:anywhere;border:1px solid var(--line,#dce6ed);border-radius:9px;padding:16px}
+.store-order-grid p{font-size:13px;line-height:1.55;margin:9px 0}
+.store-order-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
+.store-order-actions form{display:flex;flex-direction:column;gap:12px;border:1px solid var(--line,#dce6ed);padding:17px;border-radius:10px}
+.store-order-actions form label{display:flex;flex-direction:column;gap:8px;font-size:13px}
+.store-order-actions form textarea{min-height:95px;resize:vertical}
+.store-order-actions form button{align-self:flex-start}
+.store-order-actions form p{font-size:12px;opacity:.8}
+@media(max-width:800px){.store-order-grid,.store-order-actions{grid-template-columns:1fr}}

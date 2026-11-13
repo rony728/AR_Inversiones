@@ -5,6 +5,7 @@ import {
   ChartNoAxesCombined,
   ChevronDown,
   ClipboardCheck,
+  ClipboardList,
   CreditCard,
   LayoutDashboard,
   Menu,
@@ -26,6 +27,7 @@ const accessoryNav = [
   ["/productos", "Productos", Boxes],
   ["/compras", "Compras", PackagePlus],
   ["/ventas", "Ventas", ShoppingCart],
+  ["/pedidos-web", "Pedidos web", ClipboardList],
 ] as const;
 const loanNav = [
   ["/prestamos", "Préstamos", CreditCard],
