@@ -16,6 +16,10 @@ test('checkout cerrado con condiciones comerciales configuradas para previsualiz
   assert.equal(settings.confirmation, 'MANUAL');
   assert.equal(settings.payment.cashPickup, false);
   assert.equal(settings.payment.shippingPaymentConfigured, false);
+  assert.equal(settings.payment.methods.length, 5);
+  assert.equal(settings.payment.methods.filter((m) => m.enabled).length, 1);
+  assert.equal(settings.payment.methods[0].id, 'EFECTIVO');
+  assert.ok(settings.payment.methods.every((m) => m.requiresManualVerification));
   const response = await request(app).get('/api/v1/tienda/checkout-config');
   assert.equal(response.status, 200);
   assert.equal(response.headers['cache-control'], 'no-store');

@@ -4,6 +4,7 @@ import { withTransaction, query } from '../../db/pool.js';
 import { createRateLimiter } from '../../http/middleware/security.js';
 import { AppError, asyncHandler } from '../../lib/errors.js';
 import { createStoreOrder, orderCreateInput } from './order-service.js';
+import { storePaymentOptions, paymentAllowed } from './payment-methods.js';
 
 export const publicCheckoutRouter = Router();
 
@@ -11,8 +12,13 @@ export function checkoutConfiguration() {
   const pickupEnabled = env.STORE_PICKUP_ENABLED;
   const shippingEnabled = env.STORE_SHIPPING_ENABLED
     && env.STORE_SHIPPING_FEE_HNL !== undefined;
+  const methods = storePaymentOptions();
   return {
-    enabled: env.STORE_CHECKOUT_ENABLED && (pickupEnabled || shippingEnabled),
+    enabled: env.STORE_CHECKOUT_ENABLED && (
+      (pickupEnabled && methods.some((method) => method.enabled && method.deliveryModes.includes('RETIRO'))) ||
+      (shippingEnabled && env.STORE_SHIPPING_PAYMENT_ENABLED &&
+        methods.some((method) => method.enabled && method.deliveryModes.includes('ENVIO')))
+    ),
     delivery: {
       pickup: pickupEnabled,
       pickupLocation: pickupEnabled ? env.STORE_PICKUP_LOCATION : null,
@@ -25,7 +31,9 @@ export function checkoutConfiguration() {
     confirmation: 'MANUAL',
     payment: {
       cashPickup: env.STORE_CHECKOUT_ENABLED && pickupEnabled,
-      shippingPaymentConfigured: env.STORE_SHIPPING_PAYMENT_ENABLED,
+      shippingPaymentConfigured: env.STORE_SHIPPING_PAYMENT_ENABLED &&
+        methods.some((m) => m.enabled && m.deliveryModes.includes('ENVIO')),
+      methods,
     },
     disclaimer: 'Disponibilidad sujeta a confirmación. Tu pedido será revisado antes de confirmar la venta.',
   };
@@ -54,16 +62,13 @@ publicCheckoutRouter.post('/pedidos', submitLimiter, asyncHandler(async (req, re
   if (!valid.success) throw new AppError(422, 'Datos del pedido inválidos.', 'VALIDATION_ERROR');
   const data = valid.data;
 
-  if (data.modalidadEntrega === 'RETIRO') {
-    if (!config.delivery.pickup || data.metodoPago !== 'EFECTIVO') {
-      throw new AppError(422, 'Método de retiro o pago no disponible.', 'CHECKOUT_METHOD_UNAVAILABLE');
-    }
-  } else if (data.modalidadEntrega === 'ENVIO') {
-    if (!config.delivery.shipping || !config.payment.shippingPaymentConfigured || data.metodoPago !== 'EFECTIVO') {
-      throw new AppError(422, 'Envío o forma de pago no disponible.', 'CHECKOUT_METHOD_UNAVAILABLE');
-    }
-  } else {
-    throw new AppError(422, 'Modalidad de entrega no disponible.', 'CHECKOUT_METHOD_UNAVAILABLE');
+  const deliveryAvailable = data.modalidadEntrega === 'RETIRO'
+    ? config.delivery.pickup
+    : data.modalidadEntrega === 'ENVIO' && config.delivery.shipping;
+  if (!deliveryAvailable ||
+    (data.modalidadEntrega === 'ENVIO' && !config.payment.shippingPaymentConfigured) ||
+    !paymentAllowed(config.payment.methods, data.metodoPago, data.modalidadEntrega)) {
+    throw new AppError(422, 'Modalidad de entrega o método de pago no disponible.', 'CHECKOUT_METHOD_UNAVAILABLE');
   }
 
   // La referencia se conserva ante reintentos, pero nunca se exponen datos del comprador.
