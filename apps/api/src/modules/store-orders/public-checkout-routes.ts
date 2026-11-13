@@ -30,7 +30,7 @@ export function checkoutConfiguration() {
       shippingFeeHnl: shippingEnabled ? env.STORE_SHIPPING_FEE_HNL : null,
       shippingCoverage: shippingEnabled ? env.STORE_SHIPPING_COVERAGE : null,
       deliveryEstimate: shippingEnabled ? env.STORE_DELIVERY_ESTIMATE : null,
-      cashOnDelivery: false,
+      cashOnDelivery: env.STORE_COD_ENABLED && shippingEnabled,
     },
     confirmation: 'MANUAL',
     payment: {

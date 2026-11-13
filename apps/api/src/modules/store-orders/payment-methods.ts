@@ -25,19 +25,19 @@ export function storePaymentOptions(): PaymentOption[] {
     },
     {
       id: 'TRANSFERENCIA', label: 'Transferencia bancaria',
-      description: 'Datos de transferencia por confirmar. No realices pagos anticipados sin instrucciones oficiales.',
+      description: 'Elige una cuenta bancaria al registrar tu pedido y envía el comprobante para revisión.',
       enabled: env.STORE_TRANSFER_ENABLED && hasBankDetails,
       deliveryModes: ['RETIRO', 'ENVIO'], requiresManualVerification: true,
     },
     {
       id: 'DEPOSITO', label: 'Depósito bancario',
-      description: 'Datos de depósito por confirmar. El pago debe verificarse manualmente.',
+      description: 'Deposita en una de las cuentas indicadas al registrar tu pedido. Comprobaremos el pago.',
       enabled: env.STORE_DEPOSIT_ENABLED && hasBankDetails,
       deliveryModes: ['RETIRO', 'ENVIO'], requiresManualVerification: true,
     },
     {
       id: 'CONTRA_ENTREGA', label: 'Pago contra entrega',
-      description: 'Sujeto a disponibilidad del transportista y autorización comercial.',
+      description: 'Paga al recibir tu paquete. Confirmaremos cobertura y condiciones antes del envío.',
       enabled: env.STORE_COD_ENABLED && env.STORE_SHIPPING_ENABLED,
       deliveryModes: ['ENVIO'], requiresManualVerification: true,
     },
