@@ -15,7 +15,11 @@ const schema = z.object({
   DATABASE_SSL: booleanFromEnv.default('false'),
   REQUEST_BODY_LIMIT: z.string().regex(/^\d+(kb|mb)$/i).default('1mb'),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(1000).default(20),
-  AUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1000).max(86_400_000).default(900_000)
+  AUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1000).max(86_400_000).default(900_000),
+  STORE_CHECKOUT_ENABLED: booleanFromEnv.default('false'),
+  STORE_PICKUP_ENABLED: booleanFromEnv.default('false'),
+  STORE_SHIPPING_ENABLED: booleanFromEnv.default('false'),
+  STORE_SHIPPING_FEE_HNL: z.string().regex(/^\d+(?:\.\d{1,2})?$/).transform(Number).pipe(z.number().min(0).max(100000)).optional()
 });
 
 export const env = schema.parse(process.env);
