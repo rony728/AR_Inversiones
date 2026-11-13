@@ -43,3 +43,11 @@ test('sigue prohibido usar APIs administrativas desde la tienda', async () => {
     .send({});
   assert.equal(blocked.status, 403);
 });
+
+test('carga de comprobantes desactivada por defecto, sin leer base de datos', async()=>{
+  const response=await request(app).post('/api/v1/tienda/pedidos/11111111-1111-4111-8111-111111111111/comprobante')
+    .send({token:'no autorizado'});
+  assert.equal(response.status,503);
+  assert.equal(response.body.error,'PROOF_UPLOAD_DISABLED');
+  assert.equal(response.headers['cache-control'],'no-store');
+});

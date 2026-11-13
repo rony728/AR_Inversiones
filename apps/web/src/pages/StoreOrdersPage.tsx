@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { ClipboardList, RefreshCw, ShieldCheck } from 'lucide-react';
-import { api, formatMoney } from '../lib/api';
+import { api, apiBlob, formatMoney } from '../lib/api';
 
 type Status = 'PENDIENTE' | 'CONFIRMADO' | 'COMPLETADO' | 'CANCELADO';
 type Order = {
@@ -9,6 +9,7 @@ type Order = {
   modalidad_entrega: string; metodo_pago: string; subtotal: string; costo_envio: string;
   total: string; version: number; creado_at: string; actualizado_at: string;
   notas_cliente?: string | null; notas_internas?: string | null;
+  tiene_comprobante?: boolean;
 };
 type Detail = Order & {
   detalles: Array<{id:string;producto_nombre:string;producto_codigo:string|null;cantidad:number;precio_unitario:string;subtotal:string}>;
@@ -62,6 +63,21 @@ export function StoreOrdersPage() {
     } catch(e) {
       setError(e instanceof Error?e.message:'No se pudo consultar el detalle.');
     }
+  }
+
+  async function downloadProof(){
+    if(!detail || busy)return;
+    setBusy(true);setError('');
+    try{
+      const image=await apiBlob(`/pedidos-tienda/${detail.id}/comprobante`);
+      const url=URL.createObjectURL(image);
+      try{
+        const anchor=document.createElement('a');anchor.href=url;
+        anchor.download=`comprobante-pedido-${detail.numero}.${image.type==='image/png'?'png':'jpg'}`;
+        document.body.append(anchor);anchor.click();anchor.remove();
+      }finally{URL.revokeObjectURL(url);}
+    }catch(error){setError(error instanceof Error?error.message:'No se pudo obtener el comprobante.');}
+    finally{setBusy(false);}
   }
 
   async function changeStatus(event:FormEvent) {
@@ -140,6 +156,10 @@ export function StoreOrdersPage() {
           <div><strong>Comprador</strong><p>{detail.cliente_nombre}</p><p>{detail.cliente_telefono}</p><p>{detail.cliente_email || 'Sin correo'}</p></div>
           <div><strong>Entrega y pago</strong><p>{detail.modalidad_entrega}</p><p>{detail.direccion_entrega || 'Retiro coordinado'}</p><p>{detail.instrucciones_entrega || ''}</p><p>Método: {detail.metodo_pago}</p></div>
           <div><strong>Resumen</strong><p>Subtotal: {formatMoney(detail.subtotal)}</p><p>Envío: {formatMoney(detail.costo_envio)}</p><p><b>Total: {formatMoney(detail.total)}</b></p><p>Estado: {label(detail.estado)}</p></div>
+        </div>
+        <div className="store-orders-payment-proof">
+          <strong>Comprobante de pago:</strong> {detail.tiene_comprobante?'Recibido; pendiente de revisión manual':'No adjuntado'}
+          {detail.tiene_comprobante && <button type="button" className="secondary" disabled={busy} onClick={()=>void downloadProof()}>Descargar comprobante privado</button>}
         </div>
         {detail.notas_cliente && <p><strong>Observaciones del cliente:</strong> {detail.notas_cliente}</p>}
         <div className="table-wrap"><table><thead><tr><th>Producto</th><th>Código</th><th>Cantidad</th><th>Precio</th><th>Subtotal</th></tr></thead>

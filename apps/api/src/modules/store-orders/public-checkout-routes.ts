@@ -5,6 +5,10 @@ import { createRateLimiter } from '../../http/middleware/security.js';
 import { AppError, asyncHandler } from '../../lib/errors.js';
 import { createStoreOrderIdempotent, orderCreateInput } from './order-service.js';
 import { storePaymentOptions, paymentAllowed } from './payment-methods.js';
+import { receiptBankAccounts } from './bank-instructions.js';
+import { canUploadProof,createProofToken,parseProofUpload,validateProofToken } from './payment-proof.js';
+import { z } from 'zod';
+import { query } from '../../db/pool.js';
 
 export const publicCheckoutRouter = Router();
 
@@ -75,6 +79,45 @@ publicCheckoutRouter.post('/pedidos', submitLimiter, asyncHandler(async (req, re
   // El lock y la consulta de idempotencia se realizan en la MISMA transacción.
   const shippingCents = data.modalidadEntrega === 'RETIRO'
     ? 0 : Math.round((config.delivery.shippingFeeHnl ?? 0) * 100);
+  // Prevalidar el archivo bancario ANTES de insertar pedidos. Si está corrupto o
+  // carece de permisos seguros, la operación falla sin guardar un pedido a medias.
+  const approvedBanks = receiptBankAccounts(data.metodoPago, true, config.enabled,
+    env.STORE_BANK_PUBLICATION_ENABLED, env.STORE_BANK_ACCOUNTS_FILE);
   const result = await withTransaction((client) => createStoreOrderIdempotent(client, data, shippingCents));
-  return res.status(result.repeated ? 200 : 201).json({ data: result });
+  // Una repetición idempotente no devuelve instrucciones bancarias.
+  const banks = result.repeated ? [] : approvedBanks;
+  const proofToken = !result.repeated && env.STORE_PROOF_UPLOAD_ENABLED &&
+    canUploadProof(data.metodoPago,result.estado)
+    ? createProofToken(result.id,data.referenciaCliente,env.JWT_SECRET) : undefined;
+  return res.status(result.repeated ? 200 : 201).json({
+    data: { ...result, ...(banks.length ? { bankAccounts: banks } : {}),
+      ...(proofToken ? { proofUploadToken: proofToken } : {}) }
+  });
+}));
+
+
+// Carga privada a través de comprobante y token de pedido efímero. Por defecto 503.
+const proofLimiter=createRateLimiter({max:3,windowMs:15*60_000});
+publicCheckoutRouter.post('/pedidos/:id/comprobante',proofLimiter,asyncHandler(async(req,res)=>{
+  res.setHeader('Cache-Control','no-store');
+  if (!env.STORE_CHECKOUT_ENABLED || !env.STORE_PROOF_UPLOAD_ENABLED) {
+    throw new AppError(503,'Carga de comprobantes desactivada.','PROOF_UPLOAD_DISABLED');
+  }
+  const id=z.string().uuid().parse(req.params.id);
+  let proof:ReturnType<typeof parseProofUpload>;
+  try { proof=parseProofUpload(req.body); }
+  catch { throw new AppError(422,'Comprobante inválido: usa una imagen JPG o PNG de hasta 600 KB.','INVALID_PAYMENT_PROOF'); }
+  const order=await query<{id:string;referencia_cliente:string;metodo_pago:string;estado:string}>(
+    'SELECT id,referencia_cliente,metodo_pago,estado FROM pedidos_tienda WHERE id=$1',[id]);
+  const row=order.rows[0];
+  if (!row || !validateProofToken(proof.token,id,row.referencia_cliente,env.JWT_SECRET) ||
+    !canUploadProof(row.metodo_pago,row.estado)) {
+    throw new AppError(403,'Comprobante no autorizado para este pedido.','PROOF_FORBIDDEN');
+  }
+  const result=await query(
+    `INSERT INTO comprobantes_pedido_tienda (pedido_id,mime_tipo,nombre_archivo,contenido,sha256)
+     VALUES ($1,$2,$3,$4,$5) ON CONFLICT (pedido_id) DO NOTHING RETURNING id`,
+    [id,proof.mimeType,proof.fileName,proof.content,proof.sha256]);
+  if (!result.rows[0]) throw new AppError(409,'Este pedido ya tiene comprobante. Contacta por WhatsApp para reemplazarlo.','PROOF_EXISTS');
+  res.status(201).json({data:{received:true,verified:false}});
 }));

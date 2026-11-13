@@ -13,7 +13,7 @@ app.set('trust proxy', env.TRUST_PROXY);
 app.use(pinoHttp({
   genReqId: (req, res) => String(req.headers['x-request-id'] ?? res.getHeader('x-request-id') ?? randomUUID()),
   customSuccessMessage: (req, res) => `${req.method} ${req.url} ${res.statusCode}`,
-  redact: ['req.headers.authorization', 'req.headers.cookie', 'req.body.password', 'req.body.password_hash'],
+  redact: ['req.headers.authorization', 'req.headers.cookie', 'req.body.password', 'req.body.password_hash', 'req.body.token', 'req.body.dataBase64'],
   customLogLevel: (_req, res, error) => (res.statusCode === 501 ? 'info' : (error || res.statusCode >= 500 ? 'error' : 'info'))
 }));
 app.use((req, res, next) => { res.setHeader('X-Request-Id', String(req.id)); next(); });

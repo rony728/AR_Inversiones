@@ -65,7 +65,10 @@ adminStoreOrdersRouter.get('/:id', asyncHandler(async (req, res) => {
       ORDER BY e.creado_at,e.id`,[id]),
   ]);
   res.setHeader('Cache-Control','no-store');
-  res.json({ data: { ...order.rows[0], detalles:details.rows, eventos:events.rows } });
+  const proof=await query<{exists:boolean}>(
+    'SELECT EXISTS (SELECT 1 FROM comprobantes_pedido_tienda WHERE pedido_id=$1) AS exists',[id]);
+  res.json({ data: { ...order.rows[0], detalles:details.rows, eventos:events.rows,
+    tiene_comprobante:proof.rows[0]?.exists===true } });
 }));
 
 adminStoreOrdersRouter.post('/:id/estado', asyncHandler(async (req, res) => {
@@ -109,4 +112,19 @@ adminStoreOrdersRouter.post('/:id/notas', asyncHandler(async (req, res) => {
   });
   res.setHeader('Cache-Control','no-store');
   res.json({data:updated});
+}));
+
+
+// Descarga exclusiva para usuarios administrativos autenticados y activos.
+adminStoreOrdersRouter.get('/:id/comprobante',asyncHandler(async(req,res)=>{
+  const id=orderId.parse(req.params.id);
+  const result=await query<{contenido:Buffer;mime_tipo:string;nombre_archivo:string}>(
+    'SELECT contenido,mime_tipo,nombre_archivo FROM comprobantes_pedido_tienda WHERE pedido_id=$1',[id]);
+  const proof=result.rows[0];
+  if (!proof) throw new AppError(404,'No hay comprobante adjunto.','NOT_FOUND');
+  res.setHeader('Cache-Control','no-store');
+  res.setHeader('Content-Type',proof.mime_tipo);
+  res.setHeader('X-Content-Type-Options','nosniff');
+  res.setHeader('Content-Disposition',`attachment; filename="${proof.mime_tipo==='image/png'?'comprobante.png':'comprobante.jpg'}"`);
+  res.send(proof.contenido);
 }));

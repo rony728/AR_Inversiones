@@ -158,12 +158,35 @@ export async function createStoreOrderIdempotent(
   const lookup = await client.query<{
     id:string; numero:string; estado:OrderStatus;
     subtotal:string; costo_envio:string; total:string;
+    cliente_nombre:string;cliente_telefono:string;cliente_email:string|null;
+    direccion_entrega:string|null;instrucciones_entrega:string|null;
+    notas_cliente:string|null;modalidad_entrega:string;metodo_pago:string;
   }>(
-    'SELECT id,numero,estado,subtotal,costo_envio,total FROM pedidos_tienda WHERE referencia_cliente=$1',
+    `SELECT id,numero,estado,subtotal,costo_envio,total,cliente_nombre,cliente_telefono,
+       cliente_email,direccion_entrega,instrucciones_entrega,notas_cliente,modalidad_entrega,metodo_pago
+     FROM pedidos_tienda WHERE referencia_cliente=$1`,
     [input.referenciaCliente]
   );
   if (lookup.rows[0]) {
+    // La referencia NO es una autorización para consultar pedidos ajenos.
+    // Un reintento solo tiene éxito cuando coinciden todos los datos originales.
     const row=lookup.rows[0];
+    const matches = row.cliente_nombre===input.nombre && row.cliente_telefono===input.telefono &&
+      (row.cliente_email??null)===(input.email??null) &&
+      (row.direccion_entrega??null)===(input.direccionEntrega??null) &&
+      (row.instrucciones_entrega??null)===(input.instruccionesEntrega??null) &&
+      (row.notas_cliente??null)===(input.notasCliente??null) &&
+      row.modalidad_entrega===input.modalidadEntrega && row.metodo_pago===input.metodoPago &&
+      Math.round(Number(row.costo_envio)*100)===shippingCents;
+    if (!matches) throw new AppError(409,'La referencia del pedido ya fue utilizada.','ORDER_REFERENCE_CONFLICT');
+    const items=await client.query<{producto_id:string;cantidad:number}>(
+      'SELECT producto_id,cantidad FROM pedido_tienda_detalles WHERE pedido_id=$1',[row.id]
+    );
+    const original=new Map(items.rows.map(item=>[item.producto_id,item.cantidad]));
+    if (original.size!==input.productos.length ||
+        input.productos.some(item=>original.get(item.productoId)!==item.cantidad)) {
+      throw new AppError(409,'La referencia del pedido ya fue utilizada.','ORDER_REFERENCE_CONFLICT');
+    }
     return {id:row.id,numero:row.numero,estado:row.estado,subtotal:Number(row.subtotal),
       costoEnvio:Number(row.costo_envio),total:Number(row.total),repeated:true};
   }
