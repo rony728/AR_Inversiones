@@ -14,7 +14,8 @@ test('PostgreSQL con migración 010 excluye presencia expirada e incluye dos usu
     assert.equal(table.rows[0].name, 'presencia_usuarios', 'Aplica primero la migración 010 en la base de pruebas.');
     const ids = [randomUUID(), randomUUID(), randomUUID()];
     for (const [index, id] of ids.entries()) await client.query('INSERT INTO usuarios (id,nombre,usuario,password_hash) VALUES ($1,$2,$3,$4)', [id, `Presencia ${index}`, `presencia-${id}`, 'hash-prueba']);
-    const now = new Date('2026-09-12T12:00:00.000Z');
+    // Fecha fija posterior a cualquier presencia real restaurada para aislar las tres filas de prueba.
+    const now = new Date('2100-01-01T12:00:00.000Z');
     await recordHeartbeat(client, ids[0], now); await recordHeartbeat(client, ids[1], new Date(now.getTime() - 119_000)); await recordHeartbeat(client, ids[2], new Date(now.getTime() - 121_000));
     const active = await listActiveUsers(client, now);
     assert.deepEqual(active.map((user) => user.id).sort(), ids.slice(0, 2).sort());

@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import { env } from '../../config/env.js';
-import { withTransaction, query } from '../../db/pool.js';
+import { withTransaction } from '../../db/pool.js';
 import { createRateLimiter } from '../../http/middleware/security.js';
 import { AppError, asyncHandler } from '../../lib/errors.js';
-import { createStoreOrder, orderCreateInput } from './order-service.js';
+import { createStoreOrderIdempotent, orderCreateInput } from './order-service.js';
 import { storePaymentOptions, paymentAllowed } from './payment-methods.js';
 
 export const publicCheckoutRouter = Router();
@@ -71,16 +71,10 @@ publicCheckoutRouter.post('/pedidos', submitLimiter, asyncHandler(async (req, re
     throw new AppError(422, 'Modalidad de entrega o método de pago no disponible.', 'CHECKOUT_METHOD_UNAVAILABLE');
   }
 
-  // La referencia se conserva ante reintentos, pero nunca se exponen datos del comprador.
-  const existing = await query<{ id: string; numero: string; estado: string }>(
-    'SELECT id, numero, estado FROM pedidos_tienda WHERE referencia_cliente=$1', [data.referenciaCliente]);
-  if (existing.rows[0]) {
-    const row = existing.rows[0];
-    return res.status(200).json({ data: { id: row.id, numero: row.numero, estado: row.estado, repeated: true } });
-  }
-
+  // No crear pedidos duplicados aunque lleguen dos solicitudes simultáneas.
+  // El lock y la consulta de idempotencia se realizan en la MISMA transacción.
   const shippingCents = data.modalidadEntrega === 'RETIRO'
     ? 0 : Math.round((config.delivery.shippingFeeHnl ?? 0) * 100);
-  const result = await withTransaction((client) => createStoreOrder(client, data, shippingCents));
-  return res.status(201).json({ data: { ...result, repeated: false } });
+  const result = await withTransaction((client) => createStoreOrderIdempotent(client, data, shippingCents));
+  return res.status(result.repeated ? 200 : 201).json({ data: result });
 }));

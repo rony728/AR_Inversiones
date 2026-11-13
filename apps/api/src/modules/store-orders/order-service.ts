@@ -144,3 +144,28 @@ export async function changeStoreOrderStatus(
   });
   return { id:orderId, estado:next };
 }
+
+/**
+ * Atomic idempotency for simultaneous checkout retries.
+ * The advisory lock lives only inside the calling transaction; it serializes
+ * requests with the same customer-generated reference before the UNIQUE insert.
+ * The caller MUST execute this function within withTransaction.
+ */
+export async function createStoreOrderIdempotent(
+  client: PoolClient, input: OrderDraft, shippingCents: number
+) {
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text,0))', [input.referenciaCliente]);
+  const lookup = await client.query<{
+    id:string; numero:string; estado:OrderStatus;
+    subtotal:string; costo_envio:string; total:string;
+  }>(
+    'SELECT id,numero,estado,subtotal,costo_envio,total FROM pedidos_tienda WHERE referencia_cliente=$1',
+    [input.referenciaCliente]
+  );
+  if (lookup.rows[0]) {
+    const row=lookup.rows[0];
+    return {id:row.id,numero:row.numero,estado:row.estado,subtotal:Number(row.subtotal),
+      costoEnvio:Number(row.costo_envio),total:Number(row.total),repeated:true};
+  }
+  return { ...(await createStoreOrder(client,input,shippingCents)), repeated:false };
+}
