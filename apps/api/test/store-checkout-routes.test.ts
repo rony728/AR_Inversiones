@@ -4,12 +4,18 @@ import request from 'supertest';
 import { app } from '../src/app.js';
 import { checkoutConfiguration } from '../src/modules/store-orders/public-checkout-routes.js';
 
-test('checkout cerrado por defecto, no expone datos comerciales sin confirmar', async () => {
+test('checkout cerrado con condiciones comerciales configuradas para previsualización', async () => {
   const settings = checkoutConfiguration();
   assert.equal(settings.enabled, false);
-  assert.equal(settings.delivery.pickup, false);
-  assert.equal(settings.delivery.shipping, false);
-  assert.equal(settings.delivery.shippingFeeHnl, null);
+  assert.equal(settings.delivery.pickup, true);
+  assert.equal(settings.delivery.shipping, true);
+  assert.equal(settings.delivery.shippingFeeHnl, 100);
+  assert.match(settings.delivery.pickupLocation, /Gaby.s Tech/);
+  assert.equal(settings.delivery.shippingCoverage, 'Toda Honduras');
+  assert.match(settings.delivery.deliveryEstimate, /1 a 3 días/);
+  assert.equal(settings.confirmation, 'MANUAL');
+  assert.equal(settings.payment.cashPickup, false);
+  assert.equal(settings.payment.shippingPaymentConfigured, false);
   const response = await request(app).get('/api/v1/tienda/checkout-config');
   assert.equal(response.status, 200);
   assert.equal(response.headers['cache-control'], 'no-store');

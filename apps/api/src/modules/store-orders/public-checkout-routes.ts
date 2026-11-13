@@ -8,19 +8,24 @@ import { createStoreOrder, orderCreateInput } from './order-service.js';
 export const publicCheckoutRouter = Router();
 
 export function checkoutConfiguration() {
-  const pickupEnabled = env.STORE_CHECKOUT_ENABLED && env.STORE_PICKUP_ENABLED;
-  const shippingEnabled = env.STORE_CHECKOUT_ENABLED && env.STORE_SHIPPING_ENABLED
+  const pickupEnabled = env.STORE_PICKUP_ENABLED;
+  const shippingEnabled = env.STORE_SHIPPING_ENABLED
     && env.STORE_SHIPPING_FEE_HNL !== undefined;
   return {
-    enabled: pickupEnabled || shippingEnabled,
+    enabled: env.STORE_CHECKOUT_ENABLED && (pickupEnabled || shippingEnabled),
     delivery: {
       pickup: pickupEnabled,
+      pickupLocation: pickupEnabled ? env.STORE_PICKUP_LOCATION : null,
       shipping: shippingEnabled,
-      shippingFeeHnl: shippingEnabled ? env.STORE_SHIPPING_FEE_HNL! : null,
+      shippingFeeHnl: shippingEnabled ? env.STORE_SHIPPING_FEE_HNL : null,
+      shippingCoverage: shippingEnabled ? env.STORE_SHIPPING_COVERAGE : null,
+      deliveryEstimate: shippingEnabled ? env.STORE_DELIVERY_ESTIMATE : null,
       cashOnDelivery: false,
     },
+    confirmation: 'MANUAL',
     payment: {
-      cashPickup: pickupEnabled,
+      cashPickup: env.STORE_CHECKOUT_ENABLED && pickupEnabled,
+      shippingPaymentConfigured: env.STORE_SHIPPING_PAYMENT_ENABLED,
     },
     disclaimer: 'Disponibilidad sujeta a confirmación. Tu pedido será revisado antes de confirmar la venta.',
   };
@@ -54,7 +59,7 @@ publicCheckoutRouter.post('/pedidos', submitLimiter, asyncHandler(async (req, re
       throw new AppError(422, 'Método de retiro o pago no disponible.', 'CHECKOUT_METHOD_UNAVAILABLE');
     }
   } else if (data.modalidadEntrega === 'ENVIO') {
-    if (!config.delivery.shipping || data.metodoPago !== 'EFECTIVO') {
+    if (!config.delivery.shipping || !config.payment.shippingPaymentConfigured || data.metodoPago !== 'EFECTIVO') {
       throw new AppError(422, 'Envío o forma de pago no disponible.', 'CHECKOUT_METHOD_UNAVAILABLE');
     }
   } else {

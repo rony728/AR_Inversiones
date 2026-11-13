@@ -17,9 +17,13 @@ const schema = z.object({
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(1000).default(20),
   AUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1000).max(86_400_000).default(900_000),
   STORE_CHECKOUT_ENABLED: booleanFromEnv.default('false'),
-  STORE_PICKUP_ENABLED: booleanFromEnv.default('false'),
-  STORE_SHIPPING_ENABLED: booleanFromEnv.default('false'),
-  STORE_SHIPPING_FEE_HNL: z.string().regex(/^\d+(?:\.\d{1,2})?$/).transform(Number).pipe(z.number().min(0).max(100000)).optional()
+  STORE_SHIPPING_PAYMENT_ENABLED: booleanFromEnv.default('false'),
+  STORE_PICKUP_ENABLED: booleanFromEnv.default('true'),
+  STORE_SHIPPING_ENABLED: booleanFromEnv.default('true'),
+  STORE_SHIPPING_FEE_HNL: z.string().regex(/^\d+(?:\.\d{1,2})?$/).transform(Number).pipe(z.number().min(0).max(100000)).default('100'),
+  STORE_PICKUP_LOCATION: z.string().trim().min(8).max(300).default('Comayagua, segunda planta de Gaby\'s Tech, bulevar Cuarto Centenario, contiguo a Ferretería Famaco; subir las escaleras metálicas grises.'),
+  STORE_SHIPPING_COVERAGE: z.string().trim().min(2).max(120).default('Toda Honduras'),
+  STORE_DELIVERY_ESTIMATE: z.string().trim().min(2).max(120).default('1 a 3 días, estimado y sujeto a confirmación')
 });
 
 export const env = schema.parse(process.env);
