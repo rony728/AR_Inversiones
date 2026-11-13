@@ -4,6 +4,7 @@ import { query, withTransaction } from '../../db/pool.js';
 import { AppError, asyncHandler } from '../../lib/errors.js';
 import { writeAudit } from '../../lib/audit.js';
 import { changeStoreOrderStatus } from './order-service.js';
+import { env } from '../../config/env.js';
 
 export const adminStoreOrdersRouter = Router();
 
@@ -29,8 +30,16 @@ adminStoreOrdersRouter.use(asyncHandler(async (req, _res, next) => {
   const actorId = req.user?.id;
   if (!actorId || !orderId.safeParse(actorId).success)
     throw new AppError(401, 'Autenticación requerida.', 'UNAUTHORIZED');
-  const user = await query<{ id: string }>('SELECT id FROM usuarios WHERE id=$1 AND activo=true', [actorId]);
+  const user = await query<{ id: string; usuario: string }>(
+    'SELECT id,usuario FROM usuarios WHERE id=$1 AND activo=true', [actorId]);
   if (!user.rows[0]) throw new AppError(403, 'La cuenta no está activa.', 'ACCOUNT_INACTIVE');
+  // Para recibir pedidos reales se requiere una lista positiva de operadores autorizados.
+  const allowed=new Set(env.STORE_ORDER_ADMIN_USERS.split(',')
+    .map((name)=>name.trim().toLowerCase()).filter(Boolean));
+  if ((env.STORE_CHECKOUT_ENABLED || env.STORE_PROOF_UPLOAD_ENABLED) && allowed.size===0)
+    throw new AppError(503,'No se configuraron operadores de pedidos autorizados.','ORDER_ADMINS_NOT_CONFIGURED');
+  if (allowed.size>0 && !allowed.has(user.rows[0].usuario.toLowerCase()))
+    throw new AppError(403,'No tienes acceso a pedidos web.','ORDER_ACCESS_DENIED');
   next();
 }));
 

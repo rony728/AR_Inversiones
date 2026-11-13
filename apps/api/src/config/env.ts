@@ -26,6 +26,7 @@ const schema = z.object({
   STORE_BANK_ACCOUNTS_FILE: z.string().trim().optional(),
   STORE_BANK_PUBLICATION_ENABLED: booleanFromEnv.default('false'),
   STORE_PROOF_UPLOAD_ENABLED: booleanFromEnv.default('false'),
+  STORE_ORDER_ADMIN_USERS: z.string().default(''),
   STORE_PAYMENT_LINK_URL: z.string().url().startsWith('https://').optional(),
   STORE_PICKUP_ENABLED: booleanFromEnv.default('true'),
   STORE_SHIPPING_ENABLED: booleanFromEnv.default('true'),
